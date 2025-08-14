@@ -158,3 +158,126 @@ def get_os_release_data():
             os_release_data_dict[param] = param_val
 
     return os_release_data_dict
+
+
+def get_numastat():
+    numastat_p = subprocess.Popen(
+        ["numastat", "-m"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    (numastat_data, err) = numastat_p.communicate()
+    numastat_data = numastat_data.decode("utf-8").split("\n")
+
+    numastat_dict = {}
+    headers = []
+    found_headers = False
+
+    for line in numastat_data:
+        line = line.strip()
+        if not line:
+            continue
+
+        # Skip the first line (title line)
+        if "Per-node system memory usage" in line:
+            continue
+
+        # Look for the header line with Node names and Total
+        if not found_headers and ("Node" in line or "Total" in line):
+            # Parse headers by combining "Node" with following numbers
+            parts = line.split()
+            headers = []
+            i = 0
+            while i < len(parts):
+                if parts[i] == "Node" and i + 1 < len(parts) and parts[i + 1].isdigit():
+                    headers.append(f"Node {parts[i + 1]}")
+                    i += 2
+                elif parts[i] == "Total":
+                    headers.append("Total")
+                    i += 1
+                else:
+                    i += 1
+
+            # Initialize dictionaries for each node/total
+            for header in headers:
+                numastat_dict[header] = {}
+            found_headers = True
+            continue
+
+        # Skip separator lines (lines with dashes)
+        if found_headers and "-" in line:
+            continue
+
+        # Parse data lines
+        if found_headers:
+            parts = line.split()
+            if len(parts) >= 2:
+                metric_name = parts[0]
+                values = parts[1:]
+
+                # Assign values to each node/total
+                for i, value in enumerate(values):
+                    if i < len(headers):  # Make sure we don't go out of bounds
+                        header = headers[i]
+                        try:
+                            numastat_dict[header][metric_name] = float(value)
+                        except ValueError:
+                            # If conversion to float fails, store as string
+                            numastat_dict[header][metric_name] = value
+
+    return numastat_dict
+
+
+def get_ulimit():
+    ulimit_p = subprocess.Popen(
+        "ulimit -a", stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True
+    )
+    (ulimit_data, err) = ulimit_p.communicate()
+    ulimit_data = ulimit_data.decode("utf-8").split("\n")
+
+    ulimit_dict = {}
+
+    for line in ulimit_data:
+        line = line.strip()
+        if not line:
+            continue
+
+        # Find the last occurrence of parentheses which contains the flag
+        last_paren_start = line.rfind("(")
+        last_paren_end = line.rfind(")")
+
+        if last_paren_start == -1 or last_paren_end == -1:
+            continue
+
+        # Extract the description (everything before the last parentheses)
+        description_part = line[:last_paren_start].strip()
+
+        # Extract the flag and unit (inside the last parentheses)
+        flag_part = line[last_paren_start + 1 : last_paren_end]
+        # The flag is typically the last part after comma and space
+        if ", " in flag_part:
+            unit_part = flag_part.split(", ")[0]  # Everything before the comma
+            flag = flag_part.split(", ")[-1]  # Everything after the comma
+            description = f"{description_part} ({unit_part})"
+        else:
+            flag = flag_part
+            description = description_part
+
+        # Extract the value (everything after the last parentheses)
+        value_str = line[last_paren_end + 1 :].strip()
+
+        # Try to convert value to appropriate type
+        if value_str == "unlimited":
+            value = "unlimited"
+        else:
+            try:
+                # Try integer first
+                if "." not in value_str:
+                    value = int(value_str)
+                else:
+                    value = float(value_str)
+            except ValueError:
+                # If conversion fails, keep as string
+                value = value_str
+
+        ulimit_dict[description] = {"flag": flag, "value": value}
+
+    return ulimit_dict

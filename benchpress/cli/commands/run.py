@@ -129,6 +129,8 @@ class RunCommand(BenchpressCommand):
         os_release_data = sys_specs.get_os_release_data()
         kernel_cmdline = sys_specs.get_kernel_cmdline()
         dmidecode_data = sys_specs.get_dmidecode_data()
+        numastat_data = sys_specs.get_numastat()
+        ulimit_data = sys_specs.get_ulimit()
         sys_packages = []
         if "id" in os_release_data:
             os_id = os_release_data["id"].lower()
@@ -152,6 +154,8 @@ class RunCommand(BenchpressCommand):
         sys_specs_dict["memory"] = mem_data
         sys_specs_dict["hardware"] = hw_data
         sys_specs_dict["os-release"] = os_release_data
+        sys_specs_dict["numastat"] = numastat_data
+        sys_specs_dict["ulimit"] = ulimit_data
 
         final_metrics = {}
         if "machines" not in final_metrics:
