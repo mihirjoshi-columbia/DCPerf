@@ -1,0 +1,73 @@
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+#pragma once
+
+#include <cachelib/allocator/CacheAllocator.h>
+#include <folly/futures/Future.h>
+#include <memory>
+#ifdef OSS_BUILD
+#include "UcacheBenchMessages.h"
+#else
+#include "cea/chips/benchpress/packages/ucache_bench/protocol/gen/UcacheBenchMessages.h"
+#endif
+
+namespace facebook {
+namespace ucachebench {
+
+using CacheAllocator = facebook::cachelib::Lru5B2QAllocator;
+using PoolId = facebook::cachelib::PoolId;
+
+struct UcacheBenchConfig {
+  uint64_t memory_mb = 1024;
+  uint32_t hash_power = 20;
+  std::string pool_name = "default";
+  bool verbose = false;
+  // Navy (NVM/SSD cache) config (if navy_cache_size_mb > 0, hybrid mode is
+  // enabled)
+  std::string navy_cache_path = "/tmp/ucachebench_ssd";
+  uint64_t navy_cache_size_mb = 0;
+  uint32_t navy_block_size = 4096;
+  uint32_t navy_device_max_write_rate = 0;
+  uint32_t navy_region_size_mb = 16;
+  uint32_t navy_clean_regions_pool = 4;
+  bool navy_truncate_file = true;
+  // Navy advanced configurations
+  uint32_t navy_reader_threads = 32;
+  uint32_t navy_writer_threads = 32;
+  uint32_t navy_bighash_size_pct = 50; // 50% for BigHash, 50% for BlockCache
+  uint32_t navy_bighash_max_item_size = 2048; // 2KB items go to BigHash
+  uint32_t navy_bighash_bucket_size = 4096;
+  uint32_t navy_max_concurrent_inserts = 1000000;
+  uint32_t navy_max_parcel_memory_mb = 256;
+  uint64_t navy_admission_write_rate_mb = 0; // 0 = disabled
+  uint32_t navy_clean_region_threads = 4;
+  uint32_t navy_metadata_size_mb = 100;
+};
+
+class UcacheBenchServer {
+ public:
+  explicit UcacheBenchServer(const UcacheBenchConfig& config);
+
+  // Request handlers using Carbon protocol
+  folly::SemiFuture<UcbGetReply> processUcbGet(const UcbGetRequest& req);
+  folly::SemiFuture<UcbSetReply> processUcbSet(const UcbSetRequest& req);
+  folly::SemiFuture<UcbDeleteReply> processUcbDelete(
+      const UcbDeleteRequest& req);
+
+  void printStats();
+
+ private:
+  void setupCacheLib();
+
+  UcacheBenchConfig config_;
+  std::unique_ptr<CacheAllocator> cache_;
+  PoolId poolId_{};
+};
+
+} // namespace ucachebench
+} // namespace facebook
