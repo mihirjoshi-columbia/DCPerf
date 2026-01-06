@@ -11,6 +11,7 @@ set(SERVER_SOURCES
     UcacheBenchRpcServer.cpp
     UcacheBenchOnRequest.cpp
     UcacheBenchIOThreadContext.cpp
+    CpuManager.cpp
 )
 
 set(SERVER_HEADERS
@@ -20,6 +21,7 @@ set(SERVER_HEADERS
     UcacheBenchIOThreadContext.h
     UcacheBenchRequestCommon.h
     UcacheBenchThreadLoopCallback.h
+    CpuManager.h
 )
 
 add_executable(ucachebench_server ${SERVER_SOURCES} ${SERVER_HEADERS})

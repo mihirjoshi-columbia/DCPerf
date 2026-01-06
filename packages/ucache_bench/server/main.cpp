@@ -186,6 +186,9 @@ std::unique_ptr<UcacheBenchRpcServer> makeAndStartUcacheBenchRpcServer() {
           serverOnRequestMap);
   thriftServer.setInterface(thriftHandler);
 
+  // Now that the interface is set, start serving
+  ucacheBenchRpcServer->serve();
+
   return ucacheBenchRpcServer;
 }
 
