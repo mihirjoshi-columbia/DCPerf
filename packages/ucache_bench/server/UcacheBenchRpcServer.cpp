@@ -4,19 +4,68 @@
 
 #include <folly/executors/IOThreadPoolExecutor.h>
 #include <folly/executors/thread_factory/NamedThreadFactory.h>
+#include <folly/logging/xlog.h>
 #include <folly/portability/GFlags.h>
 #include <thrift/lib/cpp2/server/ThriftServer.h>
+
+#include "CpuManager.h"
 #include "UcacheBenchIOThreadContext.h"
 
 DEFINE_uint32(rpc_io_threads, 0, "Number of IO threads for RPC server");
+
+// CPU pinning configuration flags
+DEFINE_bool(
+    cpu_pinning_enabled,
+    false,
+    "Enable CPU pinning for IO threads to reduce softirq overhead");
+DEFINE_bool(
+    cpu_pinning_avoid_irqs,
+    true,
+    "Avoid CPUs that handle NIC IRQs (reduces softirq contention)");
+DEFINE_string(
+    cpu_pinning_network_interface,
+    "eth0",
+    "Network interface name for IRQ detection");
+DEFINE_bool(
+    cpu_pinning_physical_cores_only,
+    false,
+    "Use only physical cores (skip hyperthreads)");
+DEFINE_bool(
+    cpu_pinning_exclusive,
+    false,
+    "Pin each thread to exactly one CPU (exclusive mode). "
+    "Default (false) pins all threads to the same set of non-IRQ CPUs, "
+    "allowing kernel scheduler to balance load for better performance");
+DEFINE_bool(
+    cpu_pinning_reduce_threads,
+    true,
+    "Reduce IO thread count to match non-IRQ CPU count when avoiding IRQs. "
+    "This prevents thread oversubscription on remaining CPUs");
 
 namespace facebook::ucachebench {
 
 namespace {
 constexpr size_t kDefaultNumThreads = 4;
+
+CpuPinningOptions buildCpuPinningOptionsFromFlags() {
+  CpuPinningOptions opts;
+  opts.enabled = FLAGS_cpu_pinning_enabled;
+  opts.avoidIrqs = FLAGS_cpu_pinning_avoid_irqs;
+  opts.networkInterface = FLAGS_cpu_pinning_network_interface;
+  opts.physicalCoresOnly = FLAGS_cpu_pinning_physical_cores_only;
+  opts.exclusivePinning = FLAGS_cpu_pinning_exclusive;
+  return opts;
 }
 
-UcacheBenchRpcServer::UcacheBenchRpcServer() : numThreads_(numIoThreads()) {}
+} // namespace
+
+UcacheBenchRpcServer::UcacheBenchRpcServer()
+    : numThreads_(numIoThreads()),
+      cpuPinningOpts_(buildCpuPinningOptionsFromFlags()) {}
+
+UcacheBenchRpcServer::UcacheBenchRpcServer(
+    const CpuPinningOptions& cpuPinningOpts)
+    : numThreads_(numIoThreads()), cpuPinningOpts_(cpuPinningOpts) {}
 
 UcacheBenchRpcServer::~UcacheBenchRpcServer() {
   stop();
@@ -27,13 +76,39 @@ size_t UcacheBenchRpcServer::numIoThreads() noexcept {
     return FLAGS_rpc_io_threads;
   }
 
-  // Match production: use all CPU cores, no cap
-  auto numCores = std::thread::hardware_concurrency();
-  if (numCores > 0) {
-    return numCores;
+  // Use CpuManager to get accurate CPU count (respects cgroups)
+  size_t numCpus = CpuManager::getInstance().getNumCpus();
+  if (numCpus == 0) {
+    return kDefaultNumThreads;
   }
 
-  return kDefaultNumThreads;
+  // Reduce thread count when avoiding IRQs to prevent oversubscription.
+  // This matches production ucache behavior where thread count is reduced
+  // by the number of IRQ CPUs being avoided.
+  if (FLAGS_cpu_pinning_enabled && FLAGS_cpu_pinning_avoid_irqs &&
+      FLAGS_cpu_pinning_reduce_threads) {
+    auto irqCpus = CpuManager::getInstance().getIrqCpus(
+        FLAGS_cpu_pinning_network_interface);
+    size_t numIrqCpus = irqCpus.size();
+
+    if (numIrqCpus > 0 && numCpus > numIrqCpus) {
+      size_t reducedThreads = numCpus - numIrqCpus;
+      // Ensure we still have at least half the CPUs as threads
+      size_t minThreads = numCpus / 2;
+      if (reducedThreads >= minThreads) {
+        XLOG(INFO) << "Reducing IO thread count from " << numCpus << " to "
+                   << reducedThreads << " (excluding " << numIrqCpus
+                   << " IRQ CPUs)";
+        return reducedThreads;
+      } else {
+        XLOG(WARNING)
+            << "Not reducing thread count: would go below minimum threshold ("
+            << minThreads << ")";
+      }
+    }
+  }
+
+  return numCpus;
 }
 
 apache::thrift::ThriftServer& UcacheBenchRpcServer::addThriftServer() {
@@ -43,6 +118,28 @@ apache::thrift::ThriftServer& UcacheBenchRpcServer::addThriftServer() {
 
   thriftServer_ = std::make_unique<apache::thrift::ThriftServer>();
   return *thriftServer_;
+}
+
+void UcacheBenchRpcServer::applyCpuPinning() {
+  if (!cpuPinningOpts_.enabled) {
+    XLOG(INFO) << "CPU pinning disabled, skipping";
+    return;
+  }
+
+  auto evbs = extractIOEvbs();
+  if (evbs.empty()) {
+    XLOG(WARNING) << "No EventBases available for CPU pinning";
+    return;
+  }
+
+  // Print diagnostics before applying pinning
+  CpuManager::getInstance().printDiagnostics(cpuPinningOpts_.networkInterface);
+
+  if (!CpuManager::getInstance().applyPinning(evbs, cpuPinningOpts_)) {
+    XLOG(ERR) << "Failed to apply CPU pinning";
+  } else {
+    XLOG(INFO) << "Successfully applied CPU pinning with IRQ avoidance";
+  }
 }
 
 void UcacheBenchRpcServer::start(
@@ -91,8 +188,24 @@ void UcacheBenchRpcServer::start(
   thriftServer_->setIOThreadPool(ioThreadPool_);
   thriftServer_->setNumIOWorkerThreads(numThreads_);
 
-  // Start the server in a separate thread
+  // Apply CPU pinning after thread pool is created
+  applyCpuPinning();
+
+  XLOG(INFO) << "UcacheBenchRpcServer IO thread pool created with "
+             << numThreads_ << " threads";
+}
+
+void UcacheBenchRpcServer::serve() {
+  if (!thriftServer_) {
+    throw std::logic_error("No ThriftServer created");
+  }
+
+  // Start the server in a separate thread.
+  // Note: This must be called AFTER setInterface() has been called on the
+  // ThriftServer.
   serverRunner_ = std::thread([this]() { thriftServer_->serve(); });
+
+  XLOG(INFO) << "UcacheBenchRpcServer started serving";
 }
 
 void UcacheBenchRpcServer::stop() {
@@ -124,10 +237,9 @@ UcacheBenchRpcServer::getThreadPoolExecutor() {
 std::vector<folly::EventBase*> UcacheBenchRpcServer::extractIOEvbs() {
   std::vector<folly::EventBase*> evbs;
   if (ioThreadPool_) {
-    for (size_t i = 0; i < numThreads_; ++i) {
-      if (auto evb = ioThreadPool_->getEventBase()) {
-        evbs.push_back(evb);
-      }
+    auto allEvbs = ioThreadPool_->getAllEventBases();
+    for (auto& evbPtr : allEvbs) {
+      evbs.push_back(evbPtr.get());
     }
   }
   return evbs;

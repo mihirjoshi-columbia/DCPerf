@@ -13,15 +13,25 @@
 #include <thrift/lib/cpp2/async/AsyncProcessor.h>
 #include <thrift/lib/cpp2/server/ThriftServer.h>
 
+#include "CpuManager.h"
+
 namespace facebook::ucachebench {
 
 /**
  * Handles all client-facing RPC for the UcacheBench server.
  * Modeled after ucache/server's UcacheRpcServer structure.
+ *
+ * Includes CPU pinning with IRQ avoidance to reduce softirq overhead.
  */
 class UcacheBenchRpcServer {
  public:
   UcacheBenchRpcServer();
+
+  /**
+   * Constructor with CPU pinning options.
+   * @param cpuPinningOpts Options for CPU pinning
+   */
+  explicit UcacheBenchRpcServer(const CpuPinningOptions& cpuPinningOpts);
 
   ~UcacheBenchRpcServer();
 
@@ -42,19 +52,23 @@ class UcacheBenchRpcServer {
   apache::thrift::ThriftServer& addThriftServer();
 
   /**
-   * Start ThriftServer.
+   * Initialize IO thread pool and apply CPU pinning.
+   * This sets up the thread pool but does NOT start serving.
+   * Call serve() after setInterface() to start accepting connections.
    *
-   * @param threadInit Will be called on every IO thread once before starting
-   *        the servers
-   * @param threadCleanup Will be called on every IO thread once on destruction
-   * of the servers.
-   *
-   * @throw std::invalid_argument on unexpected options/config
-   * @throw std::logic_error on invalid config
+   * @param threadInit Function called on each IO thread during initialization.
+   * @param threadCleanup Function called on each IO thread during shutdown.
    */
   void start(
       const std::function<void(folly::EventBase&)>& threadInit,
       const std::function<void()>& threadCleanup);
+
+  /**
+   * Start accepting connections and serving requests.
+   * Must be called AFTER setInterface() has been called on the ThriftServer.
+   * This spawns a background thread that calls ThriftServer::serve().
+   */
+  void serve();
 
   /**
    * Shutdown ThriftServer.
@@ -81,8 +95,18 @@ class UcacheBenchRpcServer {
    */
   std::vector<folly::EventBase*> extractIOEvbs();
 
+  /**
+   * Get the CPU pinning options currently in use.
+   */
+  const CpuPinningOptions& getCpuPinningOptions() const {
+    return cpuPinningOpts_;
+  }
+
  private:
+  void applyCpuPinning();
+
   const size_t numThreads_{0};
+  CpuPinningOptions cpuPinningOpts_;
   std::shared_ptr<folly::IOThreadPoolExecutorBase> ioThreadPool_;
   std::unique_ptr<apache::thrift::ThriftServer> thriftServer_;
   std::thread serverRunner_;
