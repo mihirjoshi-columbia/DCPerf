@@ -250,12 +250,12 @@ def run(args) -> None:
                     exec_logname = sql_file.replace(".sql", ".log")
                     exec_logpath = joinpath(WORK_PATH, exec_logname)
                     stages = parse_per_stage_runtime(exec_logpath, sum(worker_cores))
-                    fp.write(f"{' '*4}queries-per-hour : {queries_per_hour:.3f}\n")
-                    fp.write(f"{' '*4}test-{test_name} : {test_elapsed_time:.1f}\n")
+                    fp.write(f"{' ' * 4}queries-per-hour : {queries_per_hour:.3f}\n")
+                    fp.write(f"{' ' * 4}test-{test_name} : {test_elapsed_time:.1f}\n")
                     for stage, timeline in stages.items():
                         elapsed_time = timeline[1] - timeline[0]
                         fp.write(
-                            f"{' '*4}test-{test_name}-stage-{stage} : "
+                            f"{' ' * 4}test-{test_name}-stage-{stage} : "
                             + f"{elapsed_time.total_seconds():.1f}\n"
                         )
                 time.sleep(args.interval)

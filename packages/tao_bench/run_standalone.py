@@ -12,7 +12,6 @@ import subprocess
 import threading
 
 import args_utils
-
 from run_autoscale import gen_client_instructions
 
 BENCHPRESS_ROOT = pathlib.Path(os.path.abspath(__file__)).parents[2]

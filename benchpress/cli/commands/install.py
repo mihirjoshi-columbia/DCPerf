@@ -49,9 +49,7 @@ class InstallCommand(BenchpressCommand):
         install_log = open("install.log", "w")
         for job in jobs.values():
             if not job.install_script:
-                msg = (
-                    "{} does not have install script," " try running without install it"
-                )
+                msg = "{} does not have install script, try running without install it"
                 install_log.write(msg.format(job.name) + "\n")
                 click.echo(msg.format(job.name))
                 continue

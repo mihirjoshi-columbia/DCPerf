@@ -25,7 +25,6 @@ from typing import Any, Dict, Generator, List, Optional
 from uuid import UUID
 
 from django.core.cache import cache
-
 from django_workload.models import ClipChunkModel, ClipVideoModel
 
 from .thrift_client import get_clips_ads_client, get_clips_ranking_client

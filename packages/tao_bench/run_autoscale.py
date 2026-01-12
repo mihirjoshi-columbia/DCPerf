@@ -12,7 +12,6 @@ import re
 import shlex
 import socket
 import subprocess
-
 import sys
 import time
 from datetime import datetime
@@ -229,7 +228,7 @@ def gen_client_instructions(args, to_file=True):
                 + "\n"
             )
     for i in range(len(clients)):
-        instruction_text += f"Client {i+1}:\n"
+        instruction_text += f"Client {i + 1}:\n"
         instruction_text += clients[i] + "\n"
 
     if to_file:

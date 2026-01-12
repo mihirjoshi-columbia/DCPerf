@@ -176,10 +176,10 @@ def parse_line_xxhash_benchmark(f, sum_c):
                 for i, value in enumerate(values):
                     if current_section == "large_inputs":
                         # log9 to log27 (512 bytes to 128 MB)
-                        input_size = f"log{9+i}"
+                        input_size = f"log{9 + i}"
                     else:
                         # 1 to N bytes
-                        input_size = f"{i+1}_bytes"
+                        input_size = f"{i + 1}_bytes"
                     data[input_size] = value
 
                 sum_c[current_section][hash_name] = data

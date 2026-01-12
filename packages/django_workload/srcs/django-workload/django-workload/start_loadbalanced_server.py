@@ -272,7 +272,7 @@ class UWSGIManager:
             != 0
         ):
             logger.warning(
-                "uWSGI not found in PATH. Install with:\n" "  pip install uwsgi"
+                "uWSGI not found in PATH. Install with:\n  pip install uwsgi"
             )
             raise RuntimeError("uWSGI not installed")
 

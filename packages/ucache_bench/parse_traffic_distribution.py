@@ -248,7 +248,7 @@ def print_summary(
     total_get_hits = sum(op.hits for op in get_ops)
     for op in sorted(get_ops, key=lambda x: x.hits, reverse=True):
         print(
-            f"  {op.operation:30s}: {op.hits:15,.0f} hits ({op.hits/total_get_hits*100:5.2f}%)"
+            f"  {op.operation:30s}: {op.hits:15,.0f} hits ({op.hits / total_get_hits * 100:5.2f}%)"
         )
 
     print(f"\nTotal GET hits: {total_get_hits:,.0f}")
@@ -257,7 +257,7 @@ def print_summary(
     total_set_hits = sum(op.hits for op in set_ops)
     for op in sorted(set_ops, key=lambda x: x.hits, reverse=True):
         print(
-            f"  {op.operation:30s}: {op.hits:15,.0f} hits ({op.hits/total_set_hits*100:5.2f}%)"
+            f"  {op.operation:30s}: {op.hits:15,.0f} hits ({op.hits / total_set_hits * 100:5.2f}%)"
         )
 
     print(f"\nTotal SET hits: {total_set_hits:,.0f}")
@@ -267,8 +267,10 @@ def print_summary(
         print(f"  {op.operation:30s}: {op.hits:15,.0f} hits")
 
     print("\n=== Distribution Configuration ===\n")
-    print(f"GET Ratio: {config.get_ratio:.4f} ({config.get_ratio*100:.2f}%)")
-    print(f"SET Ratio: {1-config.get_ratio:.4f} ({(1-config.get_ratio)*100:.2f}%)")
+    print(f"GET Ratio: {config.get_ratio:.4f} ({config.get_ratio * 100:.2f}%)")
+    print(
+        f"SET Ratio: {1 - config.get_ratio:.4f} ({(1 - config.get_ratio) * 100:.2f}%)"
+    )
     print(f"\nGET Key Size (avg): {config.get_key_size_avg:.2f} bytes")
     print(
         f"GET Response Size (avg): {config.get_response_size_avg:.2f} bytes"

@@ -284,7 +284,7 @@ def main() -> None:
         f.write(f"# Sorted from high to low ratio\n")
         f.write("#\n")
         f.write(f"# {'Benchmark':<80} {'File1':>15} {'File2':>15} {'Ratio':>10}\n")
-        f.write(f"# {'-'*80} {'-'*15} {'-'*15} {'-'*10}\n")
+        f.write(f"# {'-' * 80} {'-' * 15} {'-' * 15} {'-' * 10}\n")
 
         for name, val1, val2, ratio in comparisons:
             f.write(f"{name:<80} {val1:>15.6f} {val2:>15.6f} {ratio:>10.4f}\n")

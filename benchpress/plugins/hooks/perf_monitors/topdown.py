@@ -640,12 +640,14 @@ def choose_perfspect():
     elif os.path.exists(perfspect1_bin1) and os.path.exists(perfspect1_bin2):
         return IntelPerfSpect
     else:
-        logger.warning(f"Neither perfspect 1.x nor perfspect 3.x is available.\n \
+        logger.warning(
+            f"Neither perfspect 1.x nor perfspect 3.x is available.\n \
         None of the followings exist:\n \
         {perfspect3_bin}\n \
         {perfspect1_bin1} \n \
         {perfspect1_bin2} \n \
-        .")
+        ."
+        )
         return DummyPerfUtil
 
 

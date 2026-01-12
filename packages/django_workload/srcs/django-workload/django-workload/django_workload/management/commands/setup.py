@@ -7,14 +7,12 @@
 import random
 import string
 import unicodedata
-
 from datetime import datetime, timedelta
 from itertools import cycle, islice
 
 from cassandra.util import uuid_from_time
 from django.core.management.base import BaseCommand
 from django_cassandra_engine.management.commands import sync_cassandra
-
 from django_workload.models import (
     BundleEntryModel,
     BundleReelClipModel,

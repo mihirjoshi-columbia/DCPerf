@@ -29,7 +29,6 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from django.core.cache import cache
-
 from django_workload.models import BundleEntryModel, ClipVideoModel, UserModel
 
 from .thrift_client import (

@@ -306,7 +306,7 @@ class Job:
                 )
             except Exception:
                 logger.error(
-                    "Failed to parse results, this might mean the" " benchmark failed"
+                    "Failed to parse results, this might mean the benchmark failed"
                 )
                 logger.error("stdout:\n{}".format(stdout))
                 logger.error("stderr:\n{}".format(stderr))

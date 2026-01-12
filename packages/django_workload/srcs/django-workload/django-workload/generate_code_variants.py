@@ -772,7 +772,7 @@ def feed_timeline_v{variant_id}(request):
     """
     Feed timeline variant {variant_id}.
 
-    Steps: {', '.join([s['variant_class_name'] for s in step_configs])}
+    Steps: {", ".join([s["variant_class_name"] for s in step_configs])}
     """
     feed_timeline = FeedTimeline(request)
 

@@ -642,7 +642,7 @@ class CPUPrimitives:
             val2 = integers[i * 3 + 1]
             val3 = integers[i * 3 + 2]
 
-            results.append(f"f-string: {val1}, {val1**2}, {val1*3}")
+            results.append(f"f-string: {val1}, {val1**2}, {val1 * 3}")
             results.append(
                 "%%-format: %d, %s, %f" % (val2, f"val_{val2 % 100}", val2 * 1.5)
             )
@@ -700,7 +700,7 @@ class CPUPrimitives:
             setattr(obj, attr_name, integers[i] * 2)
             results.append(getattr(obj, attr_name, None))
             if i > 0:
-                prev_attr = f"attr_{words[i-1]}"
+                prev_attr = f"attr_{words[i - 1]}"
                 if hasattr(obj, prev_attr):
                     results.append(getattr(obj, prev_attr))
         return results
