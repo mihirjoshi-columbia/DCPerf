@@ -16,7 +16,7 @@ import logging
 import threading
 import time
 from typing import Any, Callable, Dict
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import unquote, urlparse
 
 from proxygen_binding import RequestData, ResponseData
 
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Performance debugging support
 try:
-    from quick_perf_debug import get_request_tracker
+    from quick_perf_debug import get_request_tracker  # noqa: F401
 
     _PERF_DEBUG_ENABLED = True
     logger.info("Performance debugging enabled for ASGI adapter")

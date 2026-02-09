@@ -6,24 +6,16 @@
 
 import json
 import os
-import random
-import uuid
-from ctypes import CDLL
 
-from cassandra.cqlengine.query import BatchQuery
-from django.conf import settings
-from django.core.cache import cache
 from django.http import HttpResponse
 from django.views.decorators.cache import cache_page
 from django.views.decorators.http import require_http_methods
-from django_statsd.clients import statsd
 
 from .bundle_tray import BundleTray
 from .clips import Clips
 from .feed import Feed
 from .feed_timeline import FeedTimeline
 from .inbox_handler import Inbox
-from .models import BundleSeenModel
 from .seen_handler import SeenHandler
 from .users import require_user
 

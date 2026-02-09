@@ -23,9 +23,7 @@ are never blocked by Python coroutine execution.
 """
 
 import asyncio
-import concurrent.futures
 import logging
-import queue
 import threading
 from typing import Any, Callable, Optional
 

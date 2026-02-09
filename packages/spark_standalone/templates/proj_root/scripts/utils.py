@@ -6,8 +6,6 @@
 
 import json
 import os
-import pathlib
-import platform
 import subprocess
 from typing import Dict, List, Optional
 
