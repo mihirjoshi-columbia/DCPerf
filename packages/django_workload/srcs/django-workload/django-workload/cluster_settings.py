@@ -7,7 +7,7 @@
 # Template file to configure the cluster.
 # Copy this file to cluster_settings.py before starting the WSGI server
 # and adjust as needed.
-from django_workload.settings import *  # noqa F403
+from django_workload.settings import CACHES, DATABASES, MIDDLEWARE
 
 # Security settings
 SECRET_KEY = "()2uyyko+p=dv*nmu$b5my9px!e0=6r5unm19or$02$-c62%gb"
