@@ -27,7 +27,7 @@ import random
 import struct
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Type
+from typing import Any, Callable, Dict, List, Set, Tuple, Type
 
 
 # ============================================================================
