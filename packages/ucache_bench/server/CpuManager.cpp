@@ -65,7 +65,7 @@ void CpuManager::discoverAvailableCpus() {
   }
 
   // Fallback: use hardware concurrency
-  unsigned int numCpus = folly::hardware_concurrency();
+  unsigned int numCpus = folly::available_concurrency();
   if (numCpus == 0) {
     numCpus = 1;
   }
