@@ -224,7 +224,7 @@ void UcacheBenchRpcServer::start(
         std::function<void()> cleanup)
         : threadInit_(std::move(init)), threadCleanup_(std::move(cleanup)) {}
 
-    void registerEventBase(folly::EventBase& evb) override {
+    void registerEventBase(folly::EventBase& evb) noexcept override {
       // Initialize fiber context for this thread
       UcacheBenchIOThreadContext::init(evb);
 
@@ -233,7 +233,7 @@ void UcacheBenchRpcServer::start(
       }
     }
 
-    void unregisterEventBase(folly::EventBase& evb) override {
+    void unregisterEventBase(folly::EventBase& evb) noexcept override {
       if (threadCleanup_) {
         threadCleanup_();
       }
