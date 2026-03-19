@@ -34,7 +34,7 @@ namespace ucachebench {
 // Based on YCSB's ScrambledZipfianGenerator algorithm
 class ZipfianGenerator {
  public:
-  ZipfianGenerator(uint64_t numItems, double skew = 0.99);
+  explicit ZipfianGenerator(uint64_t numItems, double skew = 0.99);
 
   // Generate a Zipfian-distributed random number in [0, numItems)
   uint64_t next();
