@@ -23,7 +23,11 @@ cdn_bench:
     scope:
       - app
       - web
-  metrics: []
+    component:
+      - cpu
+      - nic
+      - memory
+      - storage
 
 micro_cpu:
   parser : cdn_bench
@@ -50,7 +54,6 @@ micro_mem:
       - cache
     component:
       - memory
-      - cpu
 
 micro_nic:
   parser : cdn_bench
@@ -77,7 +80,7 @@ micro_flash:
       - app
       - kernel
     component:
-      - nic
+      - storage
 
 sleep:
   path: /usr/bin/sleep

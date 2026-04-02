@@ -1,8 +1,34 @@
 - benchmark: cdn_bench
   name: cdn_bench
   description: >
-    Benchmark of cdn workload, can be used to leverage Benchpress's Perf
-    Monitoring Hook for system performance metrics.
+    CDN reverse proxy benchmark using foss_revproxy. Runs content_server,
+    proxy_server, and traffic_client on localhost with HTTP/2 cleartext.
+  args:
+    - '-d {duration}'
+    - '-r {target_rps}'
+    - '-c {num_connections}'
+    - '-S {streams_per_connection}'
+    - '-p {protocol}'
+  vars:
+    - 'duration=60'
+    - 'target_rps=1000'
+    - 'num_connections=4'
+    - 'streams_per_connection=100'
+    - 'protocol=h2'
+  hooks:
+    - hook: perf
+      options:
+        perfstat:
+          interval: 1
+        mpstat:
+          interval: 1
+        netstat:
+          interval: 1
+    - hook: copymove
+      options:
+        is_move: true
+        after:
+          - 'packages/cdn_bench/cdn_bench_run.log'
 
 - benchmark: micro_cpu
   name: micro_cpu
