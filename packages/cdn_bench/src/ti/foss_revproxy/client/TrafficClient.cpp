@@ -6,8 +6,8 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+#include <folly/coro/Sleep.h>
 #include <folly/executors/IOThreadPoolExecutor.h>
-#include <folly/experimental/coro/Sleep.h>
 #include <folly/init/Init.h>
 #include <folly/io/async/EventBase.h>
 #include <folly/logging/xlog.h>
