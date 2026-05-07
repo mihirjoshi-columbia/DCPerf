@@ -411,6 +411,86 @@ to run on the client machines.
 >
 > ```
 
+# Interval Reporting (`--window`)
+
+By default, TaoBench is an end-to-end benchmark: it warms up, runs the test,
+and prints a single summary at the end. Setting the `window` parameter to a
+positive number of seconds switches it into **per-window streaming mode**,
+which lets you watch latency, throughput, and Linux `perf stat` counters as
+the workload runs.
+
+## Enabling
+
+`window` is a TaoBench job parameter; pass it to any of the `tao_bench_*` jobs
+via `-i`:
+
+```bash
+./benchpress_cli.py run tao_bench_autoscale -i '{"memsize": 384, "window": 10}'
+```
+
+`window` is also exposed on `tao_bench_custom`, `tao_bench_autoscale_v2_beta`,
+and `tao_bench_standalone`. The default is `0`, which keeps today's behavior
+exactly: server uses the existing `--stats-interval`, the client emits no
+`INTERVAL` lines, and the perf sampler does not start.
+
+When `window=N`:
+- the server reports its `fast_qps =, hit_rate =, slow_qps = ...` line every
+  `N` seconds (i.e. `--stats-interval` becomes `N * 1000` ms);
+- the client emits one `INTERVAL t=... ...` line per `N` seconds during the
+  test phase only (warmup is suppressed);
+- a `perf stat -I N*1000 -x , -o perf_<port>.csv -- sleep <duration>` sidecar
+  runs for the lifetime of the server.
+
+## INTERVAL line format (client side)
+
+```
+INTERVAL t=<sec> set_qps=<...> get_qps=<...> hit_rate=<...> \
+         avg_us=<...> p50_us=<...> p99_us=<...> p999_us=<...> max_us=<...>
+```
+
+Tokens are space-separated `key=value` pairs after the leading `INTERVAL`
+token, in any order. Latencies are window-relative (computed as the diff of
+two HDR-histogram snapshots).
+
+## Outputs
+
+When `window>0` you get, under `benchmark_metrics_<run_id>/`:
+
+- `server_<i>.csv` — server time-series (now with a `t_sec` column).
+- `client_<i>.csv` — parsed `INTERVAL` time-series per server instance:
+  `t_sec,set_qps,get_qps,hit_rate,avg_us,p50_us,p99_us,p999_us,max_us`.
+- `perf_<port>.csv` — raw `perf stat -I -x ,` CSV.
+- `interval_metrics_<i>.csv` — per-instance unified table joining server,
+  client, and perf rows on `t_sec`.
+- `interval_metrics_overall.csv` — same shape, aggregated across all
+  instances (throughput summed, latency QPS-weighted-averaged, perf counters
+  averaged).
+
+The final JSON metrics (the one printed by `benchpress run`) also gain:
+
+- `client_avg_us`, `client_p50_us_avg`, `client_p99_us_avg`,
+  `client_p999_us_avg`, `client_max_us`, `client_intervals`
+- `ipc`, `llc_miss_rate` (computed from the perf-stat sidecar)
+- `perf_event_means` (raw mean of every event the sampler captured)
+
+## perf event set
+
+The default event list lives in `packages/tao_bench/perf_sampler.py`
+(`DEFAULT_EVENTS`):
+
+```
+task-clock, cycles, instructions, cache-references, cache-misses,
+LLC-load-misses, branch-misses
+```
+
+To override, set `DCPERF_PERF_EVENTS` to a comma-separated event list before
+launching the job, e.g.:
+
+```bash
+DCPERF_PERF_EVENTS=cycles,instructions,dTLB-load-misses,iTLB-load-misses \
+  ./benchpress_cli.py run tao_bench_autoscale -i '{"window": 5}'
+```
+
 # Troubleshooting
 
 ## Build error related to Boost, numpy and `PyArray_Descr`

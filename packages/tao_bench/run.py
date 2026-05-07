@@ -15,6 +15,7 @@ import time
 from typing import List
 
 import args_utils
+from perf_sampler import PerfSampler, perf_csv_path_for_instance
 
 
 BENCHPRESS_ROOT = pathlib.Path(os.path.abspath(__file__)).parents[2]
@@ -56,6 +57,7 @@ def run_cmd(
     cmd: List[str],
     timeout=None,
     for_real=True,
+    on_exit=None,
 ) -> str:
     print(" ".join(cmd))
     if for_real:
@@ -68,6 +70,14 @@ def run_cmd(
         except subprocess.TimeoutExpired:
             proc.terminate()
             proc.wait()
+        finally:
+            # Always run cleanup callbacks (e.g. stopping the perf sampler)
+            # even when the underlying server hits the timeout fence.
+            if on_exit is not None:
+                try:
+                    on_exit()
+                except Exception as e:
+                    print(f"on_exit callback failed: {e}")
 
 
 def profile_server():
@@ -117,6 +127,11 @@ def affinitize_nic(args):
 def run_server(args):
     n_cores = len(os.sched_getaffinity(0))
     n_channels = int(n_cores * args.nic_channel_ratio)
+    # When --window is enabled, override --stats-interval so the server
+    # emits its `fast_qps = ...` line on the same cadence as the rest of
+    # the interval-reporting machinery (client INTERVAL lines, perf sampler).
+    if getattr(args, "window", 0) and args.window > 0:
+        args.stats_interval = args.window * 1000
     if args.interface_name != "lo":
         affinitize_nic(args)
     # number of threads for various paths
@@ -187,6 +202,21 @@ def run_server(args):
         t_prof = threading.Timer(profiler_wait_time, profile_server)
         t_prof.start()
 
+    # Spawn the perf-stat sidecar when interval reporting is enabled. We
+    # only run it during the actual test phase so the warmup is excluded.
+    perf_sampler = None
+    if getattr(args, "window", 0) and args.window > 0:
+        perf_csv = perf_csv_path_for_instance(
+            TAO_BENCH_DIR, getattr(args, "port_number", 11211)
+        )
+        perf_sampler = PerfSampler(
+            output_csv=perf_csv,
+            window_sec=args.window,
+            duration_sec=args.warmup_time + args.test_time + args.timeout_buffer,
+        )
+        print(f"Starting perf sampler: {perf_sampler.cmd_string()}")
+        perf_sampler.start()
+
     # If running on Ubuntu, we should explicitly export LD_LIBRARY_PATH
     # to be benchmarks/tao_bench/build-deps/lib to workaround a bug that
     # TaoBench server will try to load the libcrypto in system even though we
@@ -195,13 +225,18 @@ def run_server(args):
         os.environ["LD_LIBRARY_PATH"] = os.path.join(TAO_BENCH_DIR, "build-deps/lib")
 
     timeout = args.warmup_time + args.test_time + args.timeout_buffer
-    run_cmd(server_cmd, timeout, args.real)
+
+    def _cleanup_perf_sampler():
+        if perf_sampler is not None:
+            perf_sampler.stop()
+
+    run_cmd(server_cmd, timeout, args.real, on_exit=_cleanup_perf_sampler)
 
     if "DCPERF_PERF_RECORD" in os.environ and os.environ["DCPERF_PERF_RECORD"] == "1":
         t_prof.cancel()
 
 
-def get_client_cmd(args, n_seconds):
+def get_client_cmd(args, n_seconds, is_warmup=False):
     # threads
     if args.num_threads > 0:
         n_threads = args.num_threads
@@ -265,6 +300,12 @@ def get_client_cmd(args, n_seconds):
             "--tls",
             "--tls-skip-verify",
         ]
+    # tao_bench_client (memtier fork) honors --window=N to emit per-window
+    # INTERVAL t=... lines with latency percentiles. We only forward when
+    # interval reporting is requested AND we're in the execution phase, so
+    # the warmup invocation never produces INTERVAL output.
+    if getattr(args, "window", 0) and args.window > 0 and not is_warmup:
+        client_cmd += [f"--window={args.window}"]
     return client_cmd
 
 
@@ -274,12 +315,12 @@ def run_client(args):
         subprocess.run(shlex.split(cmd))
 
     print("warm up phase ...")
-    cmd = get_client_cmd(args, n_seconds=args.warmup_time)
+    cmd = get_client_cmd(args, n_seconds=args.warmup_time, is_warmup=True)
     run_cmd(cmd, timeout=args.warmup_time + 30, for_real=args.real)
     if args.real and args.wait_after_warmup > 0:
         time.sleep(args.wait_after_warmup)
     print("execution phase ...")
-    cmd = get_client_cmd(args, n_seconds=args.test_time)
+    cmd = get_client_cmd(args, n_seconds=args.test_time, is_warmup=False)
     run_cmd(cmd, timeout=args.test_time + 30, for_real=args.real)
 
 

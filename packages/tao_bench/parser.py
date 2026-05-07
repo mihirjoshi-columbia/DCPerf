@@ -5,6 +5,49 @@
 # LICENSE file in the root directory of this source tree.
 
 
+class TaoBenchClientIntervalSnapshot:
+    """Parses a single ``INTERVAL t=... ...`` line emitted by tao_bench_client
+    when it's run with ``--window=<sec>``.
+
+    The line is space-delimited ``key=value`` pairs after the ``INTERVAL``
+    leader, so any reordering by the C++ side is tolerated.
+    """
+
+    KEYS = (
+        "t",
+        "set_qps",
+        "get_qps",
+        "hit_rate",
+        "avg_us",
+        "p50_us",
+        "p99_us",
+        "p999_us",
+        "max_us",
+    )
+
+    def __init__(self, line):
+        self.valid = False
+        line = line.strip()
+        if not line.startswith("INTERVAL"):
+            return
+        for token in line.split()[1:]:
+            if "=" not in token:
+                continue
+            key, _, value = token.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if key not in self.KEYS:
+                continue
+            try:
+                setattr(self, key, float(value))
+            except ValueError:
+                continue
+        self.valid = all(hasattr(self, k) for k in self.KEYS)
+
+    def get(self, key, default=0.0):
+        return getattr(self, key, default)
+
+
 class TaoBenchServerSnapshot:
     KEYS = ["fast_qps", "hit_rate", "slow_qps", "slow_qps_oom", "nanosleeps_per_sec"]
 
@@ -45,13 +88,36 @@ class TaoBenchParser:
     # result qps calculation
     MIN_HIT_RATE = 0.88
 
-    def __init__(self, server_csv_name="server.csv"):
+    def __init__(
+        self,
+        server_csv_name="server.csv",
+        window_sec=None,
+        client_csv_name=None,
+        interval_csv_name=None,
+        perf_csv_path=None,
+    ):
         self.server_csv_name = server_csv_name
+        # When None we fall back to the historical 5s cadence; callers that
+        # know --window can pass it explicitly so t_sec reflects real time.
+        self.window_sec = (
+            window_sec if window_sec and window_sec > 0 else self.DEFAULT_WINDOW_SEC
+        )
+        # Optional per-client time-series CSV; when None we skip emission.
+        self.client_csv_name = client_csv_name
+        # Optional unified interval CSV joining server+client+perf on t_sec.
+        self.interval_csv_name = interval_csv_name
+        # Optional path to the perf-stat sidecar's CSV (perf_<port>.csv).
+        self.perf_csv_path = perf_csv_path
+        # Populated by parse() so autoscale can re-aggregate without re-parsing.
+        self.client_intervals = []
+        self.server_snapshots = []
+        self.perf_rows = {}
 
     def parse(self, stdout, stderr, returncode):
         """Extracts TAO bench results from stdout."""
         metrics = {"role": "unknown"}
         server_snapshots = []
+        client_intervals = []
         warmup_done = False
         exec_done = False
         for line in stdout:
@@ -62,6 +128,13 @@ class TaoBenchParser:
             ):
                 metrics["role"] = "server"
                 server_snapshots.append(TaoBenchServerSnapshot(line))
+            # client per-window INTERVAL metrics (--window=N enabled)
+            if line.strip().startswith("INTERVAL"):
+                snap = TaoBenchClientIntervalSnapshot(line)
+                if snap.valid:
+                    client_intervals.append(snap)
+                    if metrics["role"] == "unknown":
+                        metrics["role"] = "client"
             # client metrics
             if line.strip().startswith("ALL STATS"):
                 exec_done = warmup_done
@@ -76,26 +149,182 @@ class TaoBenchParser:
         if metrics["role"] == "server":
             self.process_server_snapshots(metrics, server_snapshots)
             self.generate_server_csv(server_snapshots)
+        # Stash for downstream callers (CSV writers, autoscale aggregator).
+        self.client_intervals = client_intervals
+        self.server_snapshots = server_snapshots
+        if self.perf_csv_path:
+            self.perf_rows = self.parse_perf_csv(self.perf_csv_path)
+        if client_intervals and self.client_csv_name:
+            self.generate_client_csv(client_intervals)
+        if client_intervals:
+            self.process_client_intervals(metrics, client_intervals)
+        if self.perf_rows:
+            self.process_perf_rows(metrics, self.perf_rows)
+        if self.interval_csv_name:
+            self.generate_interval_metrics_csv()
         return metrics
+
+    @staticmethod
+    def process_perf_rows(metrics, perf_rows):
+        """Boil the perf-stat time series down to a few high-level metrics in
+        the final JSON. We compute IPC and LLC-miss-rate from the standard
+        events; other events are summed/averaged so they are still present."""
+        if not perf_rows:
+            return
+        agg = {}
+        for row in perf_rows.values():
+            for k, v in row.items():
+                agg.setdefault(k, []).append(v)
+        means = {k: (sum(v) / len(v)) for k, v in agg.items() if v}
+        cycles = means.get("cycles") or 0
+        instructions = means.get("instructions") or 0
+        cache_refs = means.get("cache-references") or 0
+        cache_misses = means.get("cache-misses") or 0
+        if cycles > 0:
+            metrics["ipc"] = instructions / cycles
+        if cache_refs > 0:
+            metrics["llc_miss_rate"] = cache_misses / cache_refs
+        # Pass through the raw means under a namespaced key so downstream
+        # tooling can still pick up arbitrary events without code changes.
+        metrics["perf_event_means"] = means
+
+    def generate_interval_metrics_csv(self):
+        """Write a single CSV joining server, client, and perf rows on t_sec.
+
+        Server rows are produced at fixed cadence (window_sec) starting at 0.
+        Client INTERVAL rows carry their own t_sec. perf-stat rows are bucketed
+        by their first column (also seconds since perf start). We line up on
+        the rounded t_sec for the join; missing fields are written as empty
+        cells so plotting tools can still consume the file.
+        """
+        client_by_t = {round(s.get("t")): s for s in self.client_intervals}
+        perf_by_t = {round(t): row for t, row in self.perf_rows.items()}
+
+        events = sorted({k for row in perf_by_t.values() for k in row.keys()})
+        header = (
+            ["t_sec", "fast_qps", "slow_qps", "hit_rate"]
+            + ["set_qps", "get_qps", "avg_us", "p50_us", "p99_us", "p999_us", "max_us"]
+            + events
+        )
+        lines = [",".join(header) + "\n"]
+
+        n_rows = max(
+            len(self.server_snapshots),
+            len(self.client_intervals),
+            len(perf_by_t),
+        )
+        for seq in range(n_rows):
+            t_sec = seq * self.window_sec
+            srv = self.server_snapshots[seq] if seq < len(self.server_snapshots) else None
+            cli = client_by_t.get(t_sec)
+            perf = perf_by_t.get(t_sec, {})
+            row = [str(t_sec)]
+            row.append(str(srv.get("fast_qps")) if srv else "")
+            row.append(str(srv.get("slow_qps")) if srv else "")
+            row.append(str(srv.get("hit_rate")) if srv else "")
+            for k in ("set_qps", "get_qps", "avg_us", "p50_us", "p99_us", "p999_us", "max_us"):
+                row.append(str(cli.get(k)) if cli else "")
+            for ev in events:
+                row.append(str(perf.get(ev, "")))
+            lines.append(",".join(row) + "\n")
+
+        with open(f"benchmarks/tao_bench/{self.interval_csv_name}", "w") as f:
+            f.writelines(lines)
+
+    @staticmethod
+    def parse_perf_csv(path):
+        """Parse a ``perf stat -I <ms> -x ,`` CSV into a dict keyed by t_sec.
+
+        ``perf stat -I`` emits one row per metric per interval; the first
+        column is the elapsed time in seconds (relative to start). We bucket
+        rows by that time-key into ``{t_sec: {event_name: value}}``.
+
+        Returns an empty dict if the file is missing, is the stub written
+        when ``perf`` was unavailable, or has no parseable rows.
+        """
+        bucketed = {}
+        try:
+            f = open(path)
+        except (OSError, IOError):
+            return bucketed
+        with f:
+            for line in f:
+                if not line or line.startswith("#") or line.startswith("\n"):
+                    continue
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) < 4:
+                    continue
+                try:
+                    t_sec = float(parts[0])
+                except ValueError:
+                    continue
+                # Layout: time, value, unit, event[, ...]
+                value_raw = parts[1]
+                event = parts[3]
+                try:
+                    value = float(value_raw.replace("<not counted>", "0"))
+                except ValueError:
+                    value = 0.0
+                bucketed.setdefault(t_sec, {})[event] = value
+        return bucketed
+
+    @staticmethod
+    def process_client_intervals(metrics, client_intervals):
+        """Surface mean/peak latency over the test phase into the metrics dict."""
+        n = len(client_intervals)
+        if n == 0:
+            return
+        sum_avg = sum(s.get("avg_us") for s in client_intervals)
+        sum_p50 = sum(s.get("p50_us") for s in client_intervals)
+        sum_p99 = sum(s.get("p99_us") for s in client_intervals)
+        sum_p999 = sum(s.get("p999_us") for s in client_intervals)
+        max_us = max(s.get("max_us") for s in client_intervals)
+        metrics["client_avg_us"] = sum_avg / n
+        metrics["client_p50_us_avg"] = sum_p50 / n
+        metrics["client_p99_us_avg"] = sum_p99 / n
+        metrics["client_p999_us_avg"] = sum_p999 / n
+        metrics["client_max_us"] = max_us
+        metrics["client_intervals"] = n
+
+    def generate_client_csv(self, client_intervals):
+        """Write the parsed INTERVAL lines to a time-series CSV for plotting."""
+        lines = ["t_sec,set_qps,get_qps,hit_rate,avg_us,p50_us,p99_us,p999_us,max_us\n"]
+        for snap in client_intervals:
+            lines.append(
+                f"{snap.get('t')},{snap.get('set_qps')},{snap.get('get_qps')},"
+                + f"{snap.get('hit_rate')},{snap.get('avg_us')},{snap.get('p50_us')},"
+                + f"{snap.get('p99_us')},{snap.get('p999_us')},{snap.get('max_us')}\n"
+            )
+        with open(f"benchmarks/tao_bench/{self.client_csv_name}", "w") as table:
+            table.writelines(lines)
+
+    # Default cadence (seconds per row) when --window is not specified;
+    # matches the historical default of --stats-interval=5000ms.
+    DEFAULT_WINDOW_SEC = 5
+
+    @staticmethod
+    def format_server_row(seq, snapshot, window_sec=DEFAULT_WINDOW_SEC):
+        fast_qps = snapshot.get("fast_qps")
+        slow_qps = snapshot.get("slow_qps")
+        is_oom = 1 if snapshot.is_oom else 0
+        total_qps = fast_qps + slow_qps
+        nanosleeps_per_sec = snapshot.get("nanosleeps_per_sec")
+        t_sec = seq * window_sec
+        return (
+            f"{seq},{t_sec},{total_qps},{fast_qps},"
+            + f"{snapshot.get('hit_rate')},{slow_qps},{is_oom},"
+            + f"{snapshot.get('slow_qps_oom')},{nanosleeps_per_sec}\n"
+        )
 
     def generate_server_csv(self, server_snapshots):
         lines = []
         lines.append(
-            "seq,total_qps,fast_qps,hit_rate,slow_qps,is_oom,slow_qps_oom,nanosleeps_per_sec\n"
+            "seq,t_sec,total_qps,fast_qps,hit_rate,slow_qps,is_oom,slow_qps_oom,nanosleeps_per_sec\n"
         )
 
         seq = 0
         for snapshot in server_snapshots:
-            fast_qps = snapshot.get("fast_qps")
-            slow_qps = snapshot.get("slow_qps")
-            is_oom = 1 if snapshot.is_oom else 0
-            total_qps = fast_qps + slow_qps
-            nanosleeps_per_sec = snapshot.get("nanosleeps_per_sec")
-            lines.append(
-                f"{seq},{total_qps},{fast_qps},"
-                + f"{snapshot.get('hit_rate')},{slow_qps},{is_oom},"
-                + f"{snapshot.get('slow_qps_oom')},{nanosleeps_per_sec}\n"
-            )
+            lines.append(self.format_server_row(seq, snapshot, self.window_sec))
             seq += 1
 
         with open(f"benchmarks/tao_bench/{self.server_csv_name}", "w") as table:

@@ -1,0 +1,255 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+#
+# 0009-tao_bench_client_interval_reporting.diff
+#
+# Adds a `--window=<sec>` flag to tao_bench_client (memtier fork) that
+# enables per-window interval reporting of throughput and client-observed
+# latency percentiles. When --window is set, tao_bench_client emits a
+# single line per window to stdout in the form:
+#
+#   INTERVAL t=<sec> set_qps=<...> get_qps=<...> hit_rate=<...> \
+#            avg_us=<...> p50_us=<...> p99_us=<...> p999_us=<...> max_us=<...>
+#
+# Default (window=0) preserves the previous end-of-run-only behavior.
+#
+# This patch is applied by packages/tao_bench/install_tao_bench_*.sh
+# AFTER 0005-tao_bench_client_memtier_20230615.diff.
+diff --git a/memtier_benchmark.cpp b/memtier_benchmark.cpp
+--- a/memtier_benchmark.cpp
++++ b/memtier_benchmark.cpp
+@@ -407,6 +407,7 @@ static int config_parse_args(int argc, char *argv[], struct benchmark_config *cf
+         o_tao_num_t_db,
+         o_tao_num_t_coherence,
+         o_tao_num_c_coherence,
+         o_tao_key_bytes,
++        o_window,
+         o_hdr_file_prefix,
+         o_help
+     };
+@@ -475,6 +476,7 @@ static int config_parse_args(int argc, char *argv[], struct benchmark_config *cf
+         { "threads-db",                 1, 0, o_tao_num_t_db },
+         { "threads-coherence",          1, 0, o_tao_num_t_coherence},
+         { "clients-coherence",          1, 0, o_tao_num_c_coherence},
+         { "key-bytes",                  1, 0, o_tao_key_bytes},
++        { "window",                     1, 0, o_window },
+         { NULL,                         0, 0, 0 }
+     };
+ 
+@@ -867,6 +869,15 @@ static int config_parse_args(int argc, char *argv[], struct benchmark_config *cf
+                     break;
+                 case o_tao_key_bytes:
+                     cfg->key_bytes = (unsigned int) strtoul(optarg, &endptr, 10);
+                     if (!(cfg->key_bytes > 0) || !endptr || *endptr != '\0') {
+                         fprintf(stderr, "error: Number of bytes in the keys.\n");
+                         return -1;
+                     }
+                     break;
++                case o_window:
++                    cfg->window = (int) strtol(optarg, &endptr, 10);
++                    if (cfg->window < 0 || !endptr || *endptr != '\0') {
++                        fprintf(stderr, "error: --window must be >= 0 (seconds).\n");
++                        return -1;
++                    }
++                    break;
+             default:
+                     return -1;
+                     break;
+@@ -1116,6 +1127,28 @@ run_stats run_benchmark(int run_id, benchmark_config* cfg, object_generator* obj
+             if (!(*i)->m_finished)
+                 active_threads++;
+ 
+             if (!(*i)->m_simulates_coherency) {
+                 total_ops += (*i)->m_cg->get_total_ops();
+                 total_bytes += (*i)->m_cg->get_total_bytes();
+                 total_latency += (*i)->m_cg->get_total_latency();
+                 thread_counter++;
+                 float factor = ((float)(thread_counter - 1) / thread_counter);
+                 duration =  factor * duration +  (float)(*i)->m_cg->get_duration_usec() / thread_counter;
+             }
+         }
++
++        /* TaoBench interval reporting tick. We compute the time elapsed
++         * since the test started (cur_duration is in usec) and, if a
++         * full window has elapsed since the last INTERVAL line, snapshot
++         * the current totals and emit a delta-based line on stdout.
++         *
++         * The very first window-boundary capture only establishes a
++         * baseline (s_have_baseline) and does NOT print. This effectively
++         * suppresses the warmup window inside the execution phase, so
++         * percentiles always reflect a fully-warm window of traffic.
++         * The Python orchestrator additionally avoids passing --window on
++         * the warmup-phase invocation; this in-binary gate is defense in
++         * depth so a stray --window on warmup still produces no output. */
++        if (cfg->window > 0) {
++            static run_stats::interval_snapshot s_prev;
++            static bool s_have_baseline = false;
++            static double s_next_emit_sec = (double)cfg->window;
++            double now_sec = double(cur_duration) / 1.0e6;
++            if (now_sec >= s_next_emit_sec) {
++                run_stats::interval_snapshot cur =
++                    stats.capture_interval_snapshot(now_sec);
++                if (s_have_baseline) {
++                    stats.format_interval_line(std::cout, s_prev, cur);
++                    std::cout.flush();
++                } else {
++                    s_have_baseline = true;
++                }
++                s_prev = cur;
++                s_next_emit_sec += (double)cfg->window;
++            }
++        }
++
+         unsigned long int cur_ops = total_ops-prev_ops;
+@@ -926,6 +937,8 @@ void usage() {
+             "      --clients-coherence=NUMBER Number of clients per thread for simulating tao consistency (default: 1)\n"
+             "      --key-bytes=NUMBER         Number of bytes in the key (default: 0 - that means prefix would be 'memtier-')\n"
++            "      --window=SECS              If > 0, emit per-window INTERVAL latency/throughput\n"
++            "                                 lines on stdout every SECS seconds (default: 0 = off)\n"
+             "      --test-time=SECS           Number of seconds to run the test\n"
+             "      --ratio=RATIO              Set:Get ratio (default: 1:10)\n"
+diff --git a/memtier_benchmark.h b/memtier_benchmark.h
+--- a/memtier_benchmark.h
++++ b/memtier_benchmark.h
+@@ -113,6 +113,8 @@ struct benchmark_config {
+     const char *tls_sni;
+     unsigned int num_threads_db;
+     unsigned int num_threads_coherence;
+     unsigned int num_clients_coherence;
+     unsigned int key_bytes;
+     char *generated_key;
++    /* TaoBench interval reporting: window length in seconds (0 = disabled). */
++    int window;
+ };
+diff --git a/run_stats.h b/run_stats.h
+--- a/run_stats.h
++++ b/run_stats.h
+@@ -45,6 +45,11 @@ class run_stats {
+ public:
+     run_stats(const benchmark_config *config);
+ 
++    /* TaoBench: snapshot of cumulative counters used to compute per-window
++     * deltas without disturbing memtier's existing aggregation. The fields
++     * mirror the totals tracked in m_totals so that subtraction yields the
++     * counts attributable to the most recent window. */
++    struct interval_snapshot {
++        double t_sec;          /* test-relative time at snapshot */
++        unsigned long long set_ops;
++        unsigned long long get_ops;
++        unsigned long long get_hits;
++        unsigned long long get_misses;
++        unsigned long long total_latency_ns;
++        /* Pickled HDR histogram (totals across set+get) used for percentile diff. */
++        std::vector<uint8_t> hist_blob;
++    };
++
++    /* TaoBench interval reporting hooks. */
++    interval_snapshot capture_interval_snapshot(double t_sec) const;
++    void format_interval_line(
++        std::ostream& os,
++        const interval_snapshot& prev,
++        const interval_snapshot& cur) const;
+     void roll_cur_stats(struct timeval* ts);
+ 
+     void update_get_op(struct timeval* ts, unsigned int bytes_rx, unsigned int bytes_tx, unsigned int latency, unsigned int hits, unsigned int misses);
+diff --git a/run_stats.cpp b/run_stats.cpp
+--- a/run_stats.cpp
++++ b/run_stats.cpp
+@@ -1,6 +1,8 @@
+ #include "run_stats.h"
++#include <hdr_histogram.h>
++#include <hdr_histogram_log.h>
+ 
+ // ... existing code ...
+ 
++/* TaoBench: snapshot the cumulative counters held in m_totals so callers
++ * (the IntervalReporter in memtier_benchmark.cpp) can compute per-window
++ * deltas. The HDR histogram is serialized to a blob using hdr_log_encode
++ * because we want the diff between two snapshots, not just the live state. */
++run_stats::interval_snapshot
++run_stats::capture_interval_snapshot(double t_sec) const
++{
++    interval_snapshot snap;
++    snap.t_sec = t_sec;
++    snap.set_ops = m_totals.m_set_cmd.m_ops;
++    snap.get_ops = m_totals.m_get_cmd.m_ops;
++    snap.get_hits = m_totals.m_get_cmd.m_hits;
++    snap.get_misses = m_totals.m_get_cmd.m_misses;
++    snap.total_latency_ns = m_totals.m_latency;
++
++    char* encoded = nullptr;
++    if (m_inst_latency_histogram &&
++        hdr_log_encode(m_inst_latency_histogram, &encoded) == 0 &&
++        encoded != nullptr) {
++        size_t n = strlen(encoded);
++        snap.hist_blob.assign(encoded, encoded + n);
++        free(encoded);
++    }
++    return snap;
++}
++
++/* Decode the two snapshots' HDR blobs and emit a single space-delimited
++ * INTERVAL line on os. We compute window-relative percentiles by decoding
++ * `cur` and `prev` and subtracting their counts; this is the standard HDR
++ * "delta" pattern. Anything we can't compute (e.g. on the very first
++ * snapshot before warmup) is reported as 0. */
++void run_stats::format_interval_line(
++    std::ostream& os,
++    const interval_snapshot& prev,
++    const interval_snapshot& cur) const
++{
++    const double dt = cur.t_sec - prev.t_sec;
++    const double set_qps = dt > 0 ? double(cur.set_ops - prev.set_ops) / dt : 0.0;
++    const double get_qps = dt > 0 ? double(cur.get_ops - prev.get_ops) / dt : 0.0;
++    const unsigned long long get_total = (cur.get_ops - prev.get_ops);
++    const double hit_rate =
++        get_total > 0 ? double(cur.get_hits - prev.get_hits) / double(get_total) : 0.0;
++    const unsigned long long all_ops =
++        (cur.set_ops - prev.set_ops) + get_total;
++    const double avg_us = all_ops > 0
++        ? double(cur.total_latency_ns - prev.total_latency_ns) / 1000.0 / double(all_ops)
++        : 0.0;
++
++    /* Decode + diff HDR histograms for percentiles. */
++    struct hdr_histogram* h_cur = nullptr;
++    struct hdr_histogram* h_prev = nullptr;
++    if (!cur.hist_blob.empty()) {
++        hdr_log_decode(&h_cur,
++                       reinterpret_cast<const char*>(cur.hist_blob.data()),
++                       cur.hist_blob.size());
++    }
++    if (!prev.hist_blob.empty()) {
++        hdr_log_decode(&h_prev,
++                       reinterpret_cast<const char*>(prev.hist_blob.data()),
++                       prev.hist_blob.size());
++    }
++    int64_t p50 = 0, p99 = 0, p999 = 0, max_v = 0;
++    if (h_cur) {
++        if (h_prev) {
++            hdr_subtract(h_cur, h_prev);
++        }
++        p50 = hdr_value_at_percentile(h_cur, 50.0);
++        p99 = hdr_value_at_percentile(h_cur, 99.0);
++        p999 = hdr_value_at_percentile(h_cur, 99.9);
++        max_v = hdr_max(h_cur);
++    }
++    if (h_cur) hdr_close(h_cur);
++    if (h_prev) hdr_close(h_prev);
++
++    os << "INTERVAL"
++       << " t=" << cur.t_sec
++       << " set_qps=" << set_qps
++       << " get_qps=" << get_qps
++       << " hit_rate=" << hit_rate
++       << " avg_us=" << avg_us
++       << " p50_us=" << p50
++       << " p99_us=" << p99
++       << " p999_us=" << p999
++       << " max_us=" << max_v
++       << std::endl;
++}
++
+
+

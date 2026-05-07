@@ -167,6 +167,9 @@ git checkout 7bea7c63c5e95fea061366b95494bf730c5ca0d4
 # Apply the patch
 git apply --check "${BPKGS_TAO_BENCH_ROOT}/0005-tao_bench_client_memtier_20230615.diff" && \
     git apply "${BPKGS_TAO_BENCH_ROOT}/0005-tao_bench_client_memtier_20230615.diff"
+# Optional interval-reporting patch: enables --window=<sec> on tao_bench_client
+# so it emits per-window INTERVAL latency/throughput lines during the test.
+patch -p1 -F 3 -i "${BPKGS_TAO_BENCH_ROOT}/0009-tao_bench_client_interval_reporting.diff"
 # Build and install
 autoreconf --force --install
 PKG_CONFIG_PATH="${TAO_BENCH_DEPS}/lib/pkgconfig" ./configure --enable-tls

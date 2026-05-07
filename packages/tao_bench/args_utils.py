@@ -129,6 +129,14 @@ def add_common_server_args(server_parser: ArgumentParser) -> List[Tuple[str, str
         help="interval of stats reporting in ms",
     )
     server_parser.add_argument(
+        "--window",
+        type=int,
+        default=0,
+        help="if > 0, enable per-window interval reporting (in seconds): "
+        + "drives server stats cadence, client INTERVAL latency lines, and "
+        + "the perf-stat sidecar. 0 (default) preserves the existing end-of-run-only behavior.",
+    )
+    server_parser.add_argument(
         "--timeout-buffer",
         type=int,
         default=120,
@@ -224,6 +232,13 @@ def add_common_client_args(client_parser: ArgumentParser) -> List[Tuple[str, str
         type=int,
         default=0,
         help="set to non-zero to disable TLS",
+    )
+    client_parser.add_argument(
+        "--window",
+        type=int,
+        default=0,
+        help="if > 0, request per-window latency reporting from tao_bench_client "
+        + "(in seconds). Forwarded to the client binary as --window. 0 disables.",
     )
     client_parser.add_argument("--real", action="store_true", help="for real")
 

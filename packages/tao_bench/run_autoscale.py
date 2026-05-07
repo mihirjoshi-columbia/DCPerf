@@ -160,6 +160,8 @@ def gen_client_instructions(args, to_file=True):
                 client_args["wait_after_warmup"] = args.client_wait_after_warmup
             if args.disable_tls != 0:
                 client_args["disable_tls"] = 1
+            if getattr(args, "window", 0) and args.window > 0:
+                client_args["window"] = args.window
             clients[c] += (
                 " ".join(
                     [
@@ -192,6 +194,8 @@ def gen_client_instructions(args, to_file=True):
                 client_args["wait_after_warmup"] = args.client_wait_after_warmup
             if args.disable_tls != 0:
                 client_args["disable_tls"] = 1
+            if getattr(args, "window", 0) and args.window > 0:
+                client_args["window"] = args.window
             clients[i] += (
                 " ".join(
                     [
@@ -259,6 +263,84 @@ def distribute_cores(n_parts):
         core_start_idx += portion + extra
         core_ranges.append(list2ranges(cores_to_alloc))
     return core_ranges
+
+
+def aggregate_interval_metrics(num_instances):
+    """Fold per-instance interval CSVs into interval_metrics_overall.csv.
+
+    Approach: read each ``interval_metrics_<i>.csv`` row by row, key on
+    ``t_sec``, and combine across instances with a simple policy:
+      - throughput-like columns are summed (fast_qps, slow_qps, set_qps, get_qps)
+      - latency-like columns are throughput-weighted-averaged when possible,
+        else simple-averaged
+      - perf counters are averaged
+    """
+    rows_per_instance = []
+    headers = None
+    for i in range(num_instances):
+        path = os.path.join(TAO_BENCH_BM_DIR, f"interval_metrics_{i}.csv")
+        if not os.path.exists(path):
+            continue
+        with open(path) as f:
+            lines = [line.rstrip("\n") for line in f]
+        if not lines:
+            continue
+        if headers is None:
+            headers = lines[0].split(",")
+        rows_per_instance.append([line.split(",") for line in lines[1:]])
+
+    if not rows_per_instance or headers is None:
+        return
+
+    sum_cols = {"fast_qps", "slow_qps", "set_qps", "get_qps"}
+    weight_avg_cols = {"avg_us", "p50_us", "p99_us", "p999_us", "hit_rate"}
+
+    n_rows = max(len(r) for r in rows_per_instance)
+    out = [",".join(headers) + "\n"]
+    for r in range(n_rows):
+        agg = [""] * len(headers)
+        agg[0] = ""
+        weights = []
+        for inst in rows_per_instance:
+            if r >= len(inst):
+                continue
+            row = inst[r]
+            if not agg[0]:
+                agg[0] = row[0]
+            try:
+                w = float(row[headers.index("fast_qps")] or 0)
+            except ValueError:
+                w = 0.0
+            weights.append(w)
+        total_w = sum(weights) or 1.0
+        for ci, col in enumerate(headers):
+            if ci == 0:
+                continue
+            vals = []
+            for inst in rows_per_instance:
+                if r >= len(inst):
+                    continue
+                cell = inst[r][ci] if ci < len(inst[r]) else ""
+                try:
+                    vals.append(float(cell))
+                except ValueError:
+                    vals.append(None)
+            num = [v for v in vals if v is not None]
+            if not num:
+                agg[ci] = ""
+                continue
+            if col in sum_cols:
+                agg[ci] = str(sum(num))
+            elif col == "max_us":
+                agg[ci] = str(max(num))
+            elif col in weight_avg_cols and total_w > 0:
+                agg[ci] = str(sum(v * w for v, w in zip(num, weights)) / total_w)
+            else:
+                agg[ci] = str(sum(num) / len(num))
+        out.append(",".join(agg) + "\n")
+
+    with open(os.path.join(TAO_BENCH_BM_DIR, "interval_metrics_overall.csv"), "w") as f:
+        f.writelines(out)
 
 
 def run_server(args):
@@ -332,13 +414,36 @@ def run_server(args):
         overall["latency(ms)"] = latency
         overall["bandwidth"] = bandwidth
 
+    parsers = []
     for i in range(args.num_servers):
         logpath = servers[i][2]
+        port_num = args.port_number_start + i
+        perf_csv = os.path.join(TAO_BENCH_DIR, f"perf_{port_num}.csv")
         with open(logpath, "r") as log:
-            parser = TaoBenchParser(f"server_{i}.csv")
+            window_sec = getattr(args, "window", 0) or 0
+            parser = TaoBenchParser(
+                server_csv_name=f"server_{i}.csv",
+                window_sec=window_sec or None,
+                client_csv_name=f"client_{i}.csv" if window_sec > 0 else None,
+                interval_csv_name=(
+                    f"interval_metrics_{i}.csv" if window_sec > 0 else None
+                ),
+                perf_csv_path=perf_csv if window_sec > 0 else None,
+            )
             res = parser.parse(log, None, procs[i].returncode)
+            parsers.append(parser)
             if "role" in res and res["role"] == "server":
                 results.append(res)
+
+    # When --window is enabled, fold all per-instance interval metric CSVs into
+    # a single overall.csv. We sum throughput (fast_qps, slow_qps), QPS-weight
+    # the latency percentiles, and average perf counters across instances so a
+    # single time-series captures the whole-machine view.
+    if getattr(args, "window", 0) and args.window > 0:
+        try:
+            aggregate_interval_metrics(args.num_servers)
+        except Exception as e:
+            print(f"interval_metrics aggregation failed: {e}")
 
     for res in results:
         overall["fast_qps"] += res["fast_qps"]
@@ -349,6 +454,31 @@ def run_server(args):
             overall["hit_ratio"] * overall["successful_instances"] + res["hit_ratio"]
         ) / (overall["successful_instances"] + 1)
         overall["successful_instances"] += 1
+
+    # Roll up the new interval-reporting metrics into the overall JSON so that
+    # users get latency and perf counter visibility straight from `benchpress
+    # run`'s output without having to grep CSVs.
+    interval_keys = (
+        "client_avg_us",
+        "client_p50_us_avg",
+        "client_p99_us_avg",
+        "client_p999_us_avg",
+        "client_max_us",
+        "client_intervals",
+        "ipc",
+        "llc_miss_rate",
+    )
+    for k in interval_keys:
+        vals = [r[k] for r in results if k in r]
+        if not vals:
+            continue
+        if k == "client_max_us":
+            overall[k] = max(vals)
+        elif k == "client_intervals":
+            overall[k] = sum(vals)
+        else:
+            overall[k] = sum(vals) / len(vals)
+
     print(json.dumps(overall, indent=4))
 
 

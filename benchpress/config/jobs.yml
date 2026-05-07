@@ -501,6 +501,7 @@
         - '--timeout-buffer={timeout_buffer}'
         - '--disable-tls={disable_tls}'
         - '--smart-nanosleep={smart_nanosleep}'
+        - '--window={window}'
         - '--real'
       vars:
         - 'interface_name=eth0'
@@ -512,6 +513,7 @@
         - 'timeout_buffer=120'
         - 'disable_tls=0'
         - 'smart_nanosleep=0'
+        - 'window=0'
     client:
       args:
         - 'client'
@@ -528,6 +530,7 @@
         - '--sanity={sanity}'
         - '--wait-after-warmup={wait_after_warmup}'
         - '--disable-tls={disable_tls}'
+        - '--window={window}'
         - '--real'
       vars:
         - 'server_hostname'
@@ -541,6 +544,7 @@
         - 'wait_after_warmup=5'
         - 'sanity=0'
         - 'disable_tls=0'
+        - 'window=0'
   hooks:
     - hook: copymove
       options:
@@ -576,6 +580,7 @@
     - '--client-wait-after-warmup={client_wait_after_warmup}'
     - '--disable-tls={disable_tls}'
     - '--smart-nanosleep={smart_nanosleep}'
+    - '--window={window}'
     - '--real'
   vars:
     - 'num_servers=0'
@@ -597,6 +602,7 @@
     - 'client_wait_after_warmup=5'
     - 'disable_tls=0'
     - 'smart_nanosleep=0'
+    - 'window=0'
   hooks:
     - hook: tao_instruction
     - hook: copymove
@@ -630,6 +636,7 @@
     - '--stats-interval={stats_interval}'
     - '--port-number-start={port_number_start}'
     - '--disable-tls={disable_tls}'
+    - '--window={window}'
   vars:
     - 'num_servers=0'
     - 'memsize=0'
@@ -644,6 +651,7 @@
     - 'stats_interval=5000'
     - 'port_number_start=11211'
     - 'disable_tls=0'
+    - 'window=0'
   hooks:
     - hook: copymove
       options:
@@ -679,6 +687,7 @@
     - '--conns-per-server-core={conns_per_server_core}'
     - '--stats-interval={stats_interval}'
     - '--disable-tls={disable_tls}'
+    - '--window={window}'
     - '--real'
   vars:
     - 'num_servers=0'
@@ -697,6 +706,7 @@
     - 'conns_per_server_core=85'
     - 'stats_interval=5000'
     - 'disable_tls=0'
+    - 'window=0'
   hooks:
     - hook: tao_instruction
     - hook: copymove

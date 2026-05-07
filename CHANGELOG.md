@@ -4,6 +4,44 @@ Copyright (c) Meta Platforms, Inc. and affiliates.
 This source code is licensed under the MIT license found in the
 LICENSE file in the root directory of this source tree.
 -->
+# Unreleased
+
+## TaoBench
+
+### Per-window interval reporting (`--window`)
+
+A new `window` parameter on the `tao_bench_*` jobs (and corresponding
+`--window=<sec>` flag on `run.py`, `run_autoscale.py`, `run_standalone.py`,
+and `tao_bench_client`) turns TaoBench into a **streaming** benchmark:
+
+- **Server throughput**: the existing `fast_qps =, hit_rate = ...` lines now
+  emit on the same cadence as the rest of the interval-reporting machinery.
+- **Client latency**: `tao_bench_client` (memtier fork) emits a single
+  `INTERVAL t=<sec> set_qps=... get_qps=... hit_rate=... avg_us=... p50_us=...
+  p99_us=... p999_us=... max_us=...` line per window during the test phase,
+  computed from HDR-histogram diffs (warmup is suppressed by the orchestrator
+  AND by an in-binary baseline-skip gate).
+- **Linux perf counters**: `packages/tao_bench/perf_sampler.py` runs
+  `perf stat -I window*1000 -x ,` alongside the server and writes one row
+  per interval to `perf_<port>.csv`. Default events: `task-clock, cycles,
+  instructions, cache-references, cache-misses, LLC-load-misses,
+  branch-misses`. Override via `DCPERF_PERF_EVENTS`.
+
+All three streams are joined per server instance into
+`benchmarks/tao_bench/interval_metrics_<i>.csv` and aggregated into
+`interval_metrics_overall.csv`. The final-results JSON gains
+`client_avg_us`, `client_p50_us_avg`, `client_p99_us_avg`,
+`client_p999_us_avg`, `client_max_us`, `ipc`, `llc_miss_rate`, and
+`perf_event_means`.
+
+Default behavior is unchanged when `window=0` (the default), so existing
+runs are bit-for-bit compatible.
+
+The client-side functionality requires the new
+`packages/tao_bench/0009-tao_bench_client_interval_reporting.diff`, which is
+applied by `install_tao_bench_x86_64.sh` and `install_tao_bench_aarch64.sh`
+on top of the existing `0005-tao_bench_client_memtier_20230615.diff`.
+
 # v1.0
 
 We are excited to release DCPerf v1.0 which is the first stable release of DCPerf. This
