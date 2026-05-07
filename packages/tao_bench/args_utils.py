@@ -233,6 +233,13 @@ def add_common_client_args(client_parser: ArgumentParser) -> List[Tuple[str, str
         default=0,
         help="set to non-zero to disable TLS",
     )
+    client_parser.add_argument(
+        "--window",
+        type=int,
+        default=0,
+        help="if > 0, request per-window latency reporting from tao_bench_client "
+        + "(in seconds). Forwarded to the client binary as --window. 0 disables.",
+    )
     client_parser.add_argument("--real", action="store_true", help="for real")
 
     return get_opt_strings(client_parser)
