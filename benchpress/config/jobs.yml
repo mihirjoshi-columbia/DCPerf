@@ -729,6 +729,7 @@
     - '--runtime {runtime}'
     - '--parallelism {parallelism}'
     - '--procs {procs}'
+    - '--window {window}'
   vars:
     - 'encoder=svt'
     - 'levels=0:0'
@@ -736,6 +737,7 @@
     - 'runtime=medium'
     - 'parallelism=1'
     - 'procs=-1'
+    - 'window=0'
   hooks:
     - hook: cpu-mpstat
       options:
@@ -760,6 +762,7 @@
     - '--runtime {runtime}'
     - '--parallelism {parallelism}'
     - '--procs {procs}'
+    - '--window {window}'
   vars:
     - 'encoder=aom'
     - 'levels=0:0'
@@ -767,6 +770,7 @@
     - 'runtime=medium'
     - 'parallelism=1'
     - 'procs=-1'
+    - 'window=0'
   hooks:
     - hook: cpu-mpstat
       options:
@@ -791,6 +795,7 @@
     - '--runtime {runtime}'
     - '--parallelism {parallelism}'
     - '--procs {procs}'
+    - '--window {window}'
   vars:
     - 'encoder=x264'
     - 'levels=0:0'
@@ -798,6 +803,7 @@
     - 'runtime=medium'
     - 'parallelism=1'
     - 'procs=-1'
+    - 'window=0'
   hooks:
     - hook: cpu-mpstat
       options:
