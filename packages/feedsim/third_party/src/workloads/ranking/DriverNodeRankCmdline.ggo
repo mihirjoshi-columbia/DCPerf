@@ -32,3 +32,5 @@ option "qps" - "Rate to send requests at. 0 means send as fast as it can." float
 option "monitor_port" - "Port to run monitoring server on." int default="7777"
 
 option "affinity" - "Set distinct CPU affinity for threads, round-robin"
+
+option "window" - "If > 0, emit per-window INTERVAL stats lines (in seconds): each line carries QPS and HDR-histogram latency percentiles aggregated since the last interval. 0 (default) keeps the existing end-of-run-only behavior." int default="0"
