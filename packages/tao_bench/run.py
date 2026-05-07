@@ -206,7 +206,7 @@ def run_server(args):
         t_prof.cancel()
 
 
-def get_client_cmd(args, n_seconds):
+def get_client_cmd(args, n_seconds, is_warmup=False):
     # threads
     if args.num_threads > 0:
         n_threads = args.num_threads
@@ -272,8 +272,9 @@ def get_client_cmd(args, n_seconds):
         ]
     # tao_bench_client (memtier fork) honors --window=N to emit per-window
     # INTERVAL t=... lines with latency percentiles. We only forward when
-    # interval reporting is requested to keep the no-window run identical.
-    if getattr(args, "window", 0) and args.window > 0:
+    # interval reporting is requested AND we're in the execution phase, so
+    # the warmup invocation never produces INTERVAL output.
+    if getattr(args, "window", 0) and args.window > 0 and not is_warmup:
         client_cmd += [f"--window={args.window}"]
     return client_cmd
 
@@ -284,12 +285,12 @@ def run_client(args):
         subprocess.run(shlex.split(cmd))
 
     print("warm up phase ...")
-    cmd = get_client_cmd(args, n_seconds=args.warmup_time)
+    cmd = get_client_cmd(args, n_seconds=args.warmup_time, is_warmup=True)
     run_cmd(cmd, timeout=args.warmup_time + 30, for_real=args.real)
     if args.real and args.wait_after_warmup > 0:
         time.sleep(args.wait_after_warmup)
     print("execution phase ...")
-    cmd = get_client_cmd(args, n_seconds=args.test_time)
+    cmd = get_client_cmd(args, n_seconds=args.test_time, is_warmup=False)
     run_cmd(cmd, timeout=args.test_time + 30, for_real=args.real)
 
 

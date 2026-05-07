@@ -74,16 +74,29 @@ diff --git a/memtier_benchmark.cpp b/memtier_benchmark.cpp
 +        /* TaoBench interval reporting tick. We compute the time elapsed
 +         * since the test started (cur_duration is in usec) and, if a
 +         * full window has elapsed since the last INTERVAL line, snapshot
-+         * the current totals and emit a delta-based line on stdout. */
++         * the current totals and emit a delta-based line on stdout.
++         *
++         * The very first window-boundary capture only establishes a
++         * baseline (s_have_baseline) and does NOT print. This effectively
++         * suppresses the warmup window inside the execution phase, so
++         * percentiles always reflect a fully-warm window of traffic.
++         * The Python orchestrator additionally avoids passing --window on
++         * the warmup-phase invocation; this in-binary gate is defense in
++         * depth so a stray --window on warmup still produces no output. */
 +        if (cfg->window > 0) {
 +            static run_stats::interval_snapshot s_prev;
++            static bool s_have_baseline = false;
 +            static double s_next_emit_sec = (double)cfg->window;
 +            double now_sec = double(cur_duration) / 1.0e6;
 +            if (now_sec >= s_next_emit_sec) {
 +                run_stats::interval_snapshot cur =
 +                    stats.capture_interval_snapshot(now_sec);
-+                stats.format_interval_line(std::cout, s_prev, cur);
-+                std::cout.flush();
++                if (s_have_baseline) {
++                    stats.format_interval_line(std::cout, s_prev, cur);
++                    std::cout.flush();
++                } else {
++                    s_have_baseline = true;
++                }
 +                s_prev = cur;
 +                s_next_emit_sec += (double)cfg->window;
 +            }
