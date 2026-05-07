@@ -88,8 +88,61 @@ diff --git a/run_stats.h b/run_stats.h
 +     * deltas without disturbing memtier's existing aggregation. The fields
 +     * mirror the totals tracked in m_totals so that subtraction yields the
 +     * counts attributable to the most recent window. */
-+    struct interval_snapshot;
++    struct interval_snapshot {
++        double t_sec;          /* test-relative time at snapshot */
++        unsigned long long set_ops;
++        unsigned long long get_ops;
++        unsigned long long get_hits;
++        unsigned long long get_misses;
++        unsigned long long total_latency_ns;
++        /* Pickled HDR histogram (totals across set+get) used for percentile diff. */
++        std::vector<uint8_t> hist_blob;
++    };
++
++    /* TaoBench interval reporting hooks. */
++    interval_snapshot capture_interval_snapshot(double t_sec) const;
++    void format_interval_line(
++        std::ostream& os,
++        const interval_snapshot& prev,
++        const interval_snapshot& cur) const;
      void roll_cur_stats(struct timeval* ts);
  
      void update_get_op(struct timeval* ts, unsigned int bytes_rx, unsigned int bytes_tx, unsigned int latency, unsigned int hits, unsigned int misses);
+diff --git a/run_stats.cpp b/run_stats.cpp
+--- a/run_stats.cpp
++++ b/run_stats.cpp
+@@ -1,6 +1,8 @@
+ #include "run_stats.h"
++#include <hdr_histogram.h>
++#include <hdr_histogram_log.h>
+ 
+ // ... existing code ...
+ 
++/* TaoBench: snapshot the cumulative counters held in m_totals so callers
++ * (the IntervalReporter in memtier_benchmark.cpp) can compute per-window
++ * deltas. The HDR histogram is serialized to a blob using hdr_log_encode
++ * because we want the diff between two snapshots, not just the live state. */
++run_stats::interval_snapshot
++run_stats::capture_interval_snapshot(double t_sec) const
++{
++    interval_snapshot snap;
++    snap.t_sec = t_sec;
++    snap.set_ops = m_totals.m_set_cmd.m_ops;
++    snap.get_ops = m_totals.m_get_cmd.m_ops;
++    snap.get_hits = m_totals.m_get_cmd.m_hits;
++    snap.get_misses = m_totals.m_get_cmd.m_misses;
++    snap.total_latency_ns = m_totals.m_latency;
++
++    char* encoded = nullptr;
++    if (m_inst_latency_histogram &&
++        hdr_log_encode(m_inst_latency_histogram, &encoded) == 0 &&
++        encoded != nullptr) {
++        size_t n = strlen(encoded);
++        snap.hist_blob.assign(encoded, encoded + n);
++        free(encoded);
++    }
++    return snap;
++}
++
+
 
