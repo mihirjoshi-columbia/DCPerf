@@ -77,3 +77,19 @@ diff --git a/memtier_benchmark.h b/memtier_benchmark.h
 +    /* TaoBench interval reporting: window length in seconds (0 = disabled). */
 +    int window;
  };
+diff --git a/run_stats.h b/run_stats.h
+--- a/run_stats.h
++++ b/run_stats.h
+@@ -45,6 +45,11 @@ class run_stats {
+ public:
+     run_stats(const benchmark_config *config);
+ 
++    /* TaoBench: snapshot of cumulative counters used to compute per-window
++     * deltas without disturbing memtier's existing aggregation. The fields
++     * mirror the totals tracked in m_totals so that subtraction yields the
++     * counts attributable to the most recent window. */
++    struct interval_snapshot;
+     void roll_cur_stats(struct timeval* ts);
+ 
+     void update_get_op(struct timeval* ts, unsigned int bytes_rx, unsigned int bytes_tx, unsigned int latency, unsigned int hits, unsigned int misses);
+
