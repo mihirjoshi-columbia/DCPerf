@@ -160,6 +160,8 @@ def gen_client_instructions(args, to_file=True):
                 client_args["wait_after_warmup"] = args.client_wait_after_warmup
             if args.disable_tls != 0:
                 client_args["disable_tls"] = 1
+            if getattr(args, "window", 0) and args.window > 0:
+                client_args["window"] = args.window
             clients[c] += (
                 " ".join(
                     [
@@ -192,6 +194,8 @@ def gen_client_instructions(args, to_file=True):
                 client_args["wait_after_warmup"] = args.client_wait_after_warmup
             if args.disable_tls != 0:
                 client_args["disable_tls"] = 1
+            if getattr(args, "window", 0) and args.window > 0:
+                client_args["window"] = args.window
             clients[i] += (
                 " ".join(
                     [
