@@ -145,7 +145,27 @@ class TaoBenchParser:
         self.client_intervals = client_intervals
         if client_intervals and self.client_csv_name:
             self.generate_client_csv(client_intervals)
+        if client_intervals:
+            self.process_client_intervals(metrics, client_intervals)
         return metrics
+
+    @staticmethod
+    def process_client_intervals(metrics, client_intervals):
+        """Surface mean/peak latency over the test phase into the metrics dict."""
+        n = len(client_intervals)
+        if n == 0:
+            return
+        sum_avg = sum(s.get("avg_us") for s in client_intervals)
+        sum_p50 = sum(s.get("p50_us") for s in client_intervals)
+        sum_p99 = sum(s.get("p99_us") for s in client_intervals)
+        sum_p999 = sum(s.get("p999_us") for s in client_intervals)
+        max_us = max(s.get("max_us") for s in client_intervals)
+        metrics["client_avg_us"] = sum_avg / n
+        metrics["client_p50_us_avg"] = sum_p50 / n
+        metrics["client_p99_us_avg"] = sum_p99 / n
+        metrics["client_p999_us_avg"] = sum_p999 / n
+        metrics["client_max_us"] = max_us
+        metrics["client_intervals"] = n
 
     def generate_client_csv(self, client_intervals):
         """Write the parsed INTERVAL lines to a time-series CSV for plotting."""
