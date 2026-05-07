@@ -45,8 +45,13 @@ class TaoBenchParser:
     # result qps calculation
     MIN_HIT_RATE = 0.88
 
-    def __init__(self, server_csv_name="server.csv"):
+    def __init__(self, server_csv_name="server.csv", window_sec=None):
         self.server_csv_name = server_csv_name
+        # When None we fall back to the historical 5s cadence; callers that
+        # know --window can pass it explicitly so t_sec reflects real time.
+        self.window_sec = (
+            window_sec if window_sec and window_sec > 0 else self.DEFAULT_WINDOW_SEC
+        )
 
     def parse(self, stdout, stderr, returncode):
         """Extracts TAO bench results from stdout."""
@@ -104,7 +109,7 @@ class TaoBenchParser:
 
         seq = 0
         for snapshot in server_snapshots:
-            lines.append(self.format_server_row(seq, snapshot))
+            lines.append(self.format_server_row(seq, snapshot, self.window_sec))
             seq += 1
 
         with open(f"benchmarks/tao_bench/{self.server_csv_name}", "w") as table:
