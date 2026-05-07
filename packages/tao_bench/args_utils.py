@@ -129,6 +129,14 @@ def add_common_server_args(server_parser: ArgumentParser) -> List[Tuple[str, str
         help="interval of stats reporting in ms",
     )
     server_parser.add_argument(
+        "--window",
+        type=int,
+        default=0,
+        help="if > 0, enable per-window interval reporting (in seconds): "
+        + "drives server stats cadence, client INTERVAL latency lines, and "
+        + "the perf-stat sidecar. 0 (default) preserves the existing end-of-run-only behavior.",
+    )
+    server_parser.add_argument(
         "--timeout-buffer",
         type=int,
         default=120,
