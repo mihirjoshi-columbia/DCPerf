@@ -57,6 +57,39 @@ diff --git a/memtier_benchmark.cpp b/memtier_benchmark.cpp
              default:
                      return -1;
                      break;
+@@ -1116,6 +1127,28 @@ run_stats run_benchmark(int run_id, benchmark_config* cfg, object_generator* obj
+             if (!(*i)->m_finished)
+                 active_threads++;
+ 
+             if (!(*i)->m_simulates_coherency) {
+                 total_ops += (*i)->m_cg->get_total_ops();
+                 total_bytes += (*i)->m_cg->get_total_bytes();
+                 total_latency += (*i)->m_cg->get_total_latency();
+                 thread_counter++;
+                 float factor = ((float)(thread_counter - 1) / thread_counter);
+                 duration =  factor * duration +  (float)(*i)->m_cg->get_duration_usec() / thread_counter;
+             }
+         }
++
++        /* TaoBench interval reporting tick. We compute the time elapsed
++         * since the test started (cur_duration is in usec) and, if a
++         * full window has elapsed since the last INTERVAL line, snapshot
++         * the current totals and emit a delta-based line on stdout. */
++        if (cfg->window > 0) {
++            static run_stats::interval_snapshot s_prev;
++            static double s_next_emit_sec = (double)cfg->window;
++            double now_sec = double(cur_duration) / 1.0e6;
++            if (now_sec >= s_next_emit_sec) {
++                run_stats::interval_snapshot cur =
++                    stats.capture_interval_snapshot(now_sec);
++                stats.format_interval_line(std::cout, s_prev, cur);
++                std::cout.flush();
++                s_prev = cur;
++                s_next_emit_sec += (double)cfg->window;
++            }
++        }
++
+         unsigned long int cur_ops = total_ops-prev_ops;
 @@ -926,6 +937,8 @@ void usage() {
              "      --clients-coherence=NUMBER Number of clients per thread for simulating tao consistency (default: 1)\n"
              "      --key-bytes=NUMBER         Number of bytes in the key (default: 0 - that means prefix would be 'memtier-')\n"
