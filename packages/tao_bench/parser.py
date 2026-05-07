@@ -78,15 +78,20 @@ class TaoBenchParser:
             self.generate_server_csv(server_snapshots)
         return metrics
 
+    # Default cadence (seconds per row) when --window is not specified;
+    # matches the historical default of --stats-interval=5000ms.
+    DEFAULT_WINDOW_SEC = 5
+
     @staticmethod
-    def format_server_row(seq, snapshot):
+    def format_server_row(seq, snapshot, window_sec=DEFAULT_WINDOW_SEC):
         fast_qps = snapshot.get("fast_qps")
         slow_qps = snapshot.get("slow_qps")
         is_oom = 1 if snapshot.is_oom else 0
         total_qps = fast_qps + slow_qps
         nanosleeps_per_sec = snapshot.get("nanosleeps_per_sec")
+        t_sec = seq * window_sec
         return (
-            f"{seq},{total_qps},{fast_qps},"
+            f"{seq},{t_sec},{total_qps},{fast_qps},"
             + f"{snapshot.get('hit_rate')},{slow_qps},{is_oom},"
             + f"{snapshot.get('slow_qps_oom')},{nanosleeps_per_sec}\n"
         )
@@ -94,7 +99,7 @@ class TaoBenchParser:
     def generate_server_csv(self, server_snapshots):
         lines = []
         lines.append(
-            "seq,total_qps,fast_qps,hit_rate,slow_qps,is_oom,slow_qps_oom,nanosleeps_per_sec\n"
+            "seq,t_sec,total_qps,fast_qps,hit_rate,slow_qps,is_oom,slow_qps_oom,nanosleeps_per_sec\n"
         )
 
         seq = 0
