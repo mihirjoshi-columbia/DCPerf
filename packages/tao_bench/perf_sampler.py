@@ -22,6 +22,29 @@ import subprocess
 from typing import List, Optional
 
 
+# Default event set picked to give a useful "system health" view without
+# requiring uncore PMUs or root-only events. Override via the events= kwarg
+# or the DCPERF_PERF_EVENTS env var (comma-separated).
+DEFAULT_EVENTS: List[str] = [
+    "task-clock",
+    "cycles",
+    "instructions",
+    "cache-references",
+    "cache-misses",
+    "LLC-load-misses",
+    "branch-misses",
+]
+
+
+def resolve_events(events: Optional[List[str]] = None) -> List[str]:
+    if events:
+        return list(events)
+    env = os.environ.get("DCPERF_PERF_EVENTS", "").strip()
+    if env:
+        return [e.strip() for e in env.split(",") if e.strip()]
+    return list(DEFAULT_EVENTS)
+
+
 class PerfSampler:
     def __init__(
         self,
@@ -39,7 +62,7 @@ class PerfSampler:
         self.output_csv = output_csv
         self.window_sec = window_sec
         self.duration_sec = duration_sec
-        self.events = events or []
+        self.events = resolve_events(events)
         self.cpu_list = cpu_list
         self.perf_binary = perf_binary
         self._proc: Optional[subprocess.Popen] = None
