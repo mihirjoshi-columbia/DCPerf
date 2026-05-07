@@ -23,12 +23,13 @@ FFMPEG_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd -P)
 
 show_help() {
 cat <<EOF
-Usage: ${0##*/} [-h] [--encoder svt|aom|x264] [--levels low:high]|[--runtime long|medium|short]|[--parallelism 0-6]|[--procs {number of jobs}]
+Usage: ${0##*/} [-h] [--encoder svt|aom|x264] [--levels low:high]|[--runtime long|medium|short]|[--parallelism 0-6]|[--procs {number of jobs}] [--window N]
 
     -h Display this help and exit
     --encoder encoder name. Default: svt
     --parallelism encoder's level of parallelism. Default: 1
     --procs number of parallel jobs. Default: -1
+    --window per-window interval reporting in seconds. Default: 0 (off)
     -output Result output file name. Default: "ffmpeg_video_workload_results.txt"
 EOF
 }
@@ -71,6 +72,9 @@ main() {
     local procs
     procs="-1"
 
+    local window
+    window="0"
+
     while :; do
         case $1 in
             --levels)
@@ -91,6 +95,9 @@ main() {
             --procs)
                 procs="$2"
                 ;;
+            --window)
+                window="$2"
+                ;;
             -h)
                 show_help >&2
                 exit 1
@@ -101,7 +108,7 @@ main() {
         esac
 
         case $1 in
-            --levels|--encoder|--output|--runtime|--parallelism|--procs)
+            --levels|--encoder|--output|--runtime|--parallelism|--procs|--window)
                 if [ -z "$2" ]; then
                     echo "Invalid option: $1 requires an argument" 1>&2
                     exit 1
@@ -220,12 +227,56 @@ main() {
 
     head -n -6 "./${run_sh}" > temp.sh && mv temp.sh "./${run_sh}" && chmod +x ./${run_sh}
 
+    # Per-window interval reporting wiring. When --window > 0 we:
+    #   1. Inject `-progress file:progress_<i>.log` on every ffmpeg invocation
+    #      in the generated run script, so we get periodic frames/fps lines.
+    #   2. Spawn a perf-stat sidecar via the shared packages/common module.
+    if [ "${window}" -gt 0 ]; then
+        rm -f progress_*.log
+        # ffmpeg supports `-progress URL` which prints stats every ~500ms.
+        # We rewrite each ffmpeg invocation to redirect progress to a per-job
+        # file. Index counter is appended on the fly via awk.
+        awk -v win="${window}" '
+            /ffmpeg/ {
+                idx++
+                sub(/ffmpeg /, "ffmpeg -progress file:progress_" idx ".log -nostats ")
+            }
+            { print }
+        ' "./${run_sh}" > "./${run_sh}.tmp" && mv "./${run_sh}.tmp" "./${run_sh}"
+        chmod +x "./${run_sh}"
+    fi
+
     #run
     benchreps_tell_state "start"
     if [ "${DCPERF_PERF_RECORD}" = 1 ] && ! [ -f "perf.data" ]; then
         collect_perf_record &
     fi
+    PERF_SAMPLER_PID=""
+    if [ "${window}" -gt 0 ]; then
+        # Spawn the shared perf-stat sidecar (packages/common/perf_sampler.py).
+        # We cap the duration at a generous 6h; the sidecar is torn down
+        # immediately after the encoder pool finishes, so the actual runtime
+        # tracks the ffmpeg pool exactly.
+        PYTHONPATH="${FFMPEG_ROOT}/../../packages/common" python3 -c "
+import os, signal, sys
+sys.path.insert(0, os.environ['PYTHONPATH'])
+from perf_sampler import PerfSampler
+s = PerfSampler(
+    output_csv='${FFMPEG_ROOT}/perf_${encoder}.csv',
+    window_sec=${window},
+    duration_sec=6 * 3600,
+)
+s.start()
+signal.pause()
+" &
+        PERF_SAMPLER_PID=$!
+        echo "Started perf sampler pid=${PERF_SAMPLER_PID}"
+    fi
     ./"${run_sh}"
+    if [ -n "${PERF_SAMPLER_PID}" ]; then
+        kill -TERM "${PERF_SAMPLER_PID}" 2>/dev/null || true
+        wait "${PERF_SAMPLER_PID}" 2>/dev/null || true
+    fi
     benchreps_tell_state "done"
     #generate output
     if [ -f "${result_filename}" ]; then
@@ -250,6 +301,31 @@ main() {
             echo "res_level${num}:" "${last_element}" | tee -a "${result_filename}"
         fi
     done
+
+    # When interval reporting was enabled, fold per-job ffmpeg progress logs
+    # and the perf-stat sidecar CSV into a single interval_metrics.csv plus
+    # update the final results file with summary fields (mean_fps, ipc, ...).
+    if [ "${window}" -gt 0 ]; then
+        PYTHONPATH="${FFMPEG_ROOT}/../../packages/common" python3 -c "
+import json, os, sys
+sys.path.insert(0, os.path.join('${FFMPEG_ROOT}', '..', '..', 'packages', 'video_transcode_bench'))
+from parser import VideoTranscodeParser
+p = VideoTranscodeParser(
+    progress_glob=os.path.join('${FFMPEG_ROOT}', 'progress_*.log'),
+    window_sec=${window},
+    perf_csv_path=os.path.join('${FFMPEG_ROOT}', 'perf_${encoder}.csv'),
+)
+summary = p.write_interval_metrics_csv(os.path.join('${FFMPEG_ROOT}', 'interval_metrics.csv'))
+with open(os.path.join('${FFMPEG_ROOT}', '${result_filename}'), 'a') as f:
+    for k, v in summary.items():
+        if k == 'perf_event_means':
+            continue
+        f.write(f'{k}: {v}\n')
+print('interval_metrics.csv summary:', json.dumps(
+    {k: v for k, v in summary.items() if k != 'perf_event_means'}
+))
+"
+    fi
 
     sed -i "/^ENC/d" ./generate_commands_all.py
     delete_replicas

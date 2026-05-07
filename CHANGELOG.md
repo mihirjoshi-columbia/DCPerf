@@ -42,6 +42,88 @@ The client-side functionality requires the new
 applied by `install_tao_bench_x86_64.sh` and `install_tao_bench_aarch64.sh`
 on top of the existing `0005-tao_bench_client_memtier_20230615.diff`.
 
+## Common
+
+The `perf_sampler.py` module (originally added under `packages/tao_bench/`)
+has been moved to `packages/common/perf_sampler.py` so it can be shared by
+`video_transcode_bench`, `wdl_bench`, and `feedsim`. A thin shim is left at
+`packages/tao_bench/perf_sampler.py` that re-exports the public surface, so
+out-of-tree imports keep working.
+
+## Video Transcode Bench
+
+### Per-window interval reporting (`--window`)
+
+A new `window` parameter on the `video_transcode_bench_{svt,aom,x264}` jobs
+turns the encoder pool into a **streaming** benchmark:
+
+- **Encoder throughput / latency**: every `ffmpeg` invocation in the
+  generated run script is rewritten to attach `-progress file:progress_<i>.log`
+  so it dumps `frame=`, `fps=`, `bitrate=`, `out_time_us=`, `speed=` blocks
+  at ~500ms cadence. `parser.py` buckets these blocks per window-aligned
+  `t_sec`.
+- **Linux perf counters**: the shared `packages/common/perf_sampler.py`
+  sidecar runs alongside the encoder pool and writes `perf_<encoder>.csv`.
+- **Unified CSV**: progress + perf rows are joined per window into
+  `interval_metrics.csv`.
+- **Final-results JSON**: gains `mean_fps`, `mean_bitrate_kbps`, `ipc`,
+  `llc_miss_rate`, `perf_event_means`.
+
+Default behavior is unchanged when `window=0`.
+
+## WDL Bench
+
+### Per-kernel interval reporting (`--window`)
+
+A new `window` parameter on every `wdl_bench` job (`folly_*`, `lzbench`,
+`openssl`) records a START/END timestamp pair around every kernel invocation
+in `interval_log.txt` and runs the shared `packages/common/perf_sampler.py`
+sidecar (`perf_wdl.csv`).
+
+Folly Benchmark kernels are too tight (a few hundred microseconds per
+iteration) to instrument in-loop without an invasive folly patch, so the
+**interval unit is per-kernel rather than per-second**. The output shape
+(interval CSV + perf-stat sidecar) is otherwise identical to the other
+benchmarks.
+
+`parser.py` writes `interval_metrics.csv` with one row per kernel: name,
+start/end relative timestamps, duration, plus the average value of every
+perf event over the kernel's wall-clock window. The final-results file
+gains `total_kernels`, `mean_ipc`, `mean_llc_miss_rate`. Default behavior
+is unchanged when `window=0`.
+
+## FeedSim
+
+### Per-window interval reporting (`-W` / `--window`)
+
+A new `window` parameter on `feedsim_default`, `feedsim_autoscale`, and
+`feedsim_autoscale_arm` (and the `-W <sec>` flag on
+`packages/feedsim/run.sh` + `run-feedsim-multi.sh`) turns FeedSim into a
+**streaming** benchmark:
+
+- **Client latency**:
+  `packages/feedsim/third_party/src/workloads/ranking/DriverNodeRank.cc`
+  installs a libevent timer on thread 0 that aggregates
+  `ChildConnectionStats` from every thread, builds a delta histogram vs
+  the previous snapshot, and emits one line per window:
+  ```
+  INTERVAL t=<sec> qps=<...> avg_us=<...> p50_us=<...> p95_us=<...> p99_us=<...>
+  ```
+  These lines are preserved across `search_qps.sh`'s probe iterations via
+  the `FEEDSIM_DRIVER_LOG` env var that `run.sh` exports.
+- **Linux perf counters**: shared `packages/common/perf_sampler.py`
+  sidecar writes `perf_<port>.csv`.
+- **Unified CSV**: client INTERVAL snapshots + perf rows are joined per
+  window into `interval_metrics_<port>.csv`. For multi-instance runs,
+  `aggregate_intervals.py` folds per-port CSVs into
+  `interval_metrics_overall.csv`.
+- **Final-results JSON**: gains `mean_qps`, `mean_p99_us`, `ipc`,
+  `llc_miss_rate`, `perf_event_means`.
+
+The C++ change is purely additive: a new `--window` ggo option + a new
+`if (window > 0) emit_INTERVAL` block. Default behavior is unchanged when
+`window=0`.
+
 # v1.0
 
 We are excited to release DCPerf v1.0 which is the first stable release of DCPerf. This

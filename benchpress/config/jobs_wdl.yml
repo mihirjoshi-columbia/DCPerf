@@ -10,9 +10,11 @@
   args:
     - '--type {type}'
     - '--output {output}'
+    - '--window {window}'
   vars:
     - 'type=single_core'
     - 'output=wdl_bench_results.txt'
+    - 'window=0'
   hooks:
     - hook: cpu-mpstat
       options:
@@ -33,9 +35,11 @@
   args:
     - '--type {type}'
     - '--output {output}'
+    - '--window {window}'
   vars:
     - 'type=all_core'
     - 'output=wdl_bench_results.txt'
+    - 'window=0'
   hooks:
     - hook: cpu-mpstat
       options:
@@ -56,9 +60,11 @@
   args:
     - '--type {type}'
     - '--output {output}'
+    - '--window {window}'
   vars:
     - 'type=multi_thread'
     - 'output=wdl_bench_results.txt'
+    - 'window=0'
   hooks:
     - hook: cpu-mpstat
       options:
@@ -79,9 +85,11 @@
   args:
     - '--name {name}'
     - '--output {output}'
+    - '--window {window}'
   vars:
     - 'name=hash_benchmark'
     - 'output=wdl_bench_results.txt'
+    - 'window=0'
   hooks:
     - hook: cpu-mpstat
       options:
@@ -104,11 +112,13 @@
     - '--type {type}'
     - '--output {output}'
     - '--algo {algo}'
+    - '--window {window}'
   vars:
     - 'name=lzbench'
     - 'type=single_core'
     - 'output=wdl_bench_results.txt'
     - 'algo=zstd'
+    - 'window=0'
   hooks:
     - hook: cpu-mpstat
       options:
@@ -130,11 +140,13 @@
     - '--type {type}'
     - '--output {output}'
     - '--algo {algo}'
+    - '--window {window}'
   vars:
     - 'name=openssl'
     - 'type=single_core'
     - 'output=wdl_bench_results.txt'
     - 'algo=ctr'
+    - 'window=0'
   hooks:
     - hook: cpu-mpstat
       options:

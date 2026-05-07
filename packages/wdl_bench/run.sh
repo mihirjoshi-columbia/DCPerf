@@ -22,9 +22,13 @@ WDL_BUILD="${WDL_ROOT}/wdl_build"
 
 show_help() {
 cat <<EOF
-Usage: ${0##*/} [-h] [--type single_core|all_core|multi_thread]
+Usage: ${0##*/} [-h] [--type single_core|all_core|multi_thread] [--window N]
 
     -h Display this help and exit
+    --window per-window interval reporting in seconds. Default: 0 (off).
+             When > 0, run a perf-stat sidecar in the background and emit a
+             per-kernel interval log so the wdl parser can build a unified
+             interval_metrics.csv.
     -output Result output file name. Default: "wdl_results.txt"
 EOF
 }
@@ -76,6 +80,8 @@ main() {
     local algo
     algo="zstd"
 
+    local window
+    window="0"
 
     while :; do
         case $1 in
@@ -91,6 +97,9 @@ main() {
             --algo)
                 algo="$2"
                 ;;
+            --window)
+                window="$2"
+                ;;
             -h)
                 show_help >&2
                 exit 1
@@ -101,7 +110,7 @@ main() {
         esac
 
         case $1 in
-            --output|--type|--name|--algo)
+            --output|--type|--name|--algo|--window)
                 if [ -z "$2" ]; then
                     echo "Invalid option: $1 requires an argument" 1>&2
                     exit 1
@@ -119,6 +128,51 @@ main() {
     benchreps_tell_state "working on config"
     pushd "${WDL_ROOT}"
 
+    # Per-kernel interval log: when --window > 0 we record a START/END
+    # timestamp pair around every kernel invocation so the parser can join
+    # individual benchmark runs against the perf-stat sidecar's CSV.
+    if [ "${window}" -gt 0 ]; then
+        rm -f interval_log.txt perf_wdl.csv
+        : > interval_log.txt
+        BENCH_START_TS_NS=$(date +%s%N)
+        export BENCH_START_TS_NS
+    fi
+
+    record_kernel_start() {
+        if [ "${window}" -gt 0 ]; then
+            local now_ns
+            now_ns=$(date +%s%N)
+            local rel_us=$(( (now_ns - BENCH_START_TS_NS) / 1000 ))
+            echo "START name=$1 t_us=${rel_us}" >> interval_log.txt
+        fi
+    }
+    record_kernel_end() {
+        if [ "${window}" -gt 0 ]; then
+            local now_ns
+            now_ns=$(date +%s%N)
+            local rel_us=$(( (now_ns - BENCH_START_TS_NS) / 1000 ))
+            echo "END name=$1 t_us=${rel_us}" >> interval_log.txt
+        fi
+    }
+
+    PERF_SAMPLER_PID=""
+    if [ "${window}" -gt 0 ]; then
+        PYTHONPATH="${WDL_ROOT}/../../packages/common" python3 -c "
+import os, signal, sys
+sys.path.insert(0, os.environ['PYTHONPATH'])
+from perf_sampler import PerfSampler
+s = PerfSampler(
+    output_csv='${WDL_ROOT}/perf_wdl.csv',
+    window_sec=${window},
+    duration_sec=6 * 3600,
+)
+s.start()
+signal.pause()
+" &
+        PERF_SAMPLER_PID=$!
+        echo "Started perf sampler pid=${PERF_SAMPLER_PID}"
+    fi
+
     #run
     benchreps_tell_state "start"
 
@@ -126,58 +180,76 @@ main() {
         run_list=$name
         export LD_LIBRARY_PATH="${WDL_BUILD}/openssl/lib64:${WDL_BUILD}/openssl/lib"
         ldconfig
+        record_kernel_start "$name"
         if [ "$run_type" = "single_core" ]; then
             ./openssl speed -seconds 20 -evp aes-256-"${algo}" > "out_${name}".txt
         elif [ "$run_type" = "all_core" ]; then
             ./openssl speed -seconds 20 -evp aes-256-"${algo}" -multi "$(nproc)" > "out_${name}".txt
         fi
+        record_kernel_end "$name"
         unset LD_LIBRARY_PATH
         ldconfig
 
     elif [ "$name" = "lzbench" ]; then
         run_list=$name
+        record_kernel_start "$name"
         if [ "$run_type" = "single_core" ]; then
             ./lzbench -e"${algo}" "${WDL_DATASETS}/silesia.tar" > "out_${name}".txt
         elif [ "$run_type" = "all_core" ]; then
             run_allcore "$name" "$algo"
         fi
+        record_kernel_end "$name"
 
     elif [ "$name" != "none" ]; then
         run_list=$name
+        record_kernel_start "$name"
         if [ "$name" = "small_locks_benchmark" ] || [ "$name" = "iobuf_benchmark" ]; then
                 "./${name}" --bm_min_iters=1000000 > "out_${benchmark}".txt
             else
                 "./${name}"  > "out_${name}".txt
         fi
+        record_kernel_end "$name"
 
     elif [ "$run_type" = "single_core" ]; then
         run_list=$folly_benchmark_list_single
         for benchmark in $run_list; do
+            record_kernel_start "$benchmark"
             if [ "$benchmark" = "iobuf_benchmark" ]; then
                 "./${benchmark}" --bm_min_iters=1000000 > "out_${benchmark}".txt
             else
                 "./${benchmark}"  > "out_${benchmark}".txt
             fi
+            record_kernel_end "$benchmark"
         done
     elif [ "$run_type" = "all_core" ]; then
         run_list=$folly_benchmark_list_all
         for benchmark in $run_list; do
+            record_kernel_start "$benchmark"
             run_allcore "$benchmark"
+            record_kernel_end "$benchmark"
         done
 
     elif [ "$run_type" = "multi_thread" ]; then
         run_list=$folly_benchmark_list_multi
         for benchmark in $run_list; do
+            record_kernel_start "$benchmark"
             if [ "$benchmark" = "small_locks_benchmark" ]; then
                 "./${benchmark}" --bm_min_iters=1000000 > "out_${benchmark}".txt
             else
                 "./${benchmark}"  > "out_${benchmark}".txt
             fi
+            record_kernel_end "$benchmark"
         done
 
     else
         echo "Invalid run type"
         exit 1
+    fi
+
+    # Tear down the perf-stat sidecar before post-processing.
+    if [ -n "${PERF_SAMPLER_PID:-}" ]; then
+        kill -TERM "${PERF_SAMPLER_PID}" 2>/dev/null || true
+        wait "${PERF_SAMPLER_PID}" 2>/dev/null || true
     fi
 
 
@@ -198,6 +270,25 @@ main() {
 
     echo "results in each individual json file." | tee -a "${result_filename}"
 
+    # When --window > 0, fold per-kernel intervals + perf rows into
+    # interval_metrics.csv and append summary keys to the results file.
+    if [ "${window}" -gt 0 ]; then
+        python3 -c "
+import json, os, sys
+sys.path.insert(0, '${WDL_ROOT}')
+from parser import WdlBenchParser
+p = WdlBenchParser(
+    interval_log='${WDL_ROOT}/interval_log.txt',
+    perf_csv='${WDL_ROOT}/perf_wdl.csv',
+    output_csv='${WDL_ROOT}/interval_metrics.csv',
+)
+summary = p.write_interval_metrics_csv()
+with open('${WDL_ROOT}/${result_filename}', 'a') as f:
+    for k, v in summary.items():
+        f.write(f'{k}: {v}\n')
+print('interval_metrics.csv summary:', json.dumps(summary))
+"
+    fi
 
     popd
 
