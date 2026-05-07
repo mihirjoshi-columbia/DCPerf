@@ -144,5 +144,66 @@ diff --git a/run_stats.cpp b/run_stats.cpp
 +    return snap;
 +}
 +
++/* Decode the two snapshots' HDR blobs and emit a single space-delimited
++ * INTERVAL line on os. We compute window-relative percentiles by decoding
++ * `cur` and `prev` and subtracting their counts; this is the standard HDR
++ * "delta" pattern. Anything we can't compute (e.g. on the very first
++ * snapshot before warmup) is reported as 0. */
++void run_stats::format_interval_line(
++    std::ostream& os,
++    const interval_snapshot& prev,
++    const interval_snapshot& cur) const
++{
++    const double dt = cur.t_sec - prev.t_sec;
++    const double set_qps = dt > 0 ? double(cur.set_ops - prev.set_ops) / dt : 0.0;
++    const double get_qps = dt > 0 ? double(cur.get_ops - prev.get_ops) / dt : 0.0;
++    const unsigned long long get_total = (cur.get_ops - prev.get_ops);
++    const double hit_rate =
++        get_total > 0 ? double(cur.get_hits - prev.get_hits) / double(get_total) : 0.0;
++    const unsigned long long all_ops =
++        (cur.set_ops - prev.set_ops) + get_total;
++    const double avg_us = all_ops > 0
++        ? double(cur.total_latency_ns - prev.total_latency_ns) / 1000.0 / double(all_ops)
++        : 0.0;
++
++    /* Decode + diff HDR histograms for percentiles. */
++    struct hdr_histogram* h_cur = nullptr;
++    struct hdr_histogram* h_prev = nullptr;
++    if (!cur.hist_blob.empty()) {
++        hdr_log_decode(&h_cur,
++                       reinterpret_cast<const char*>(cur.hist_blob.data()),
++                       cur.hist_blob.size());
++    }
++    if (!prev.hist_blob.empty()) {
++        hdr_log_decode(&h_prev,
++                       reinterpret_cast<const char*>(prev.hist_blob.data()),
++                       prev.hist_blob.size());
++    }
++    int64_t p50 = 0, p99 = 0, p999 = 0, max_v = 0;
++    if (h_cur) {
++        if (h_prev) {
++            hdr_subtract(h_cur, h_prev);
++        }
++        p50 = hdr_value_at_percentile(h_cur, 50.0);
++        p99 = hdr_value_at_percentile(h_cur, 99.0);
++        p999 = hdr_value_at_percentile(h_cur, 99.9);
++        max_v = hdr_max(h_cur);
++    }
++    if (h_cur) hdr_close(h_cur);
++    if (h_prev) hdr_close(h_prev);
++
++    os << "INTERVAL"
++       << " t=" << cur.t_sec
++       << " set_qps=" << set_qps
++       << " get_qps=" << get_qps
++       << " hit_rate=" << hit_rate
++       << " avg_us=" << avg_us
++       << " p50_us=" << p50
++       << " p99_us=" << p99
++       << " p999_us=" << p999
++       << " max_us=" << max_v
++       << std::endl;
++}
++
 
 
