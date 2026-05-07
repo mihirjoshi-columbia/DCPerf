@@ -270,6 +270,11 @@ def get_client_cmd(args, n_seconds):
             "--tls",
             "--tls-skip-verify",
         ]
+    # tao_bench_client (memtier fork) honors --window=N to emit per-window
+    # INTERVAL t=... lines with latency percentiles. We only forward when
+    # interval reporting is requested to keep the no-window run identical.
+    if getattr(args, "window", 0) and args.window > 0:
+        client_cmd += [f"--window={args.window}"]
     return client_cmd
 
 
