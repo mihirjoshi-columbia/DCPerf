@@ -150,6 +150,43 @@ class TaoBenchParser:
         return metrics
 
     @staticmethod
+    def parse_perf_csv(path):
+        """Parse a ``perf stat -I <ms> -x ,`` CSV into a dict keyed by t_sec.
+
+        ``perf stat -I`` emits one row per metric per interval; the first
+        column is the elapsed time in seconds (relative to start). We bucket
+        rows by that time-key into ``{t_sec: {event_name: value}}``.
+
+        Returns an empty dict if the file is missing, is the stub written
+        when ``perf`` was unavailable, or has no parseable rows.
+        """
+        bucketed = {}
+        try:
+            f = open(path)
+        except (OSError, IOError):
+            return bucketed
+        with f:
+            for line in f:
+                if not line or line.startswith("#") or line.startswith("\n"):
+                    continue
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) < 4:
+                    continue
+                try:
+                    t_sec = float(parts[0])
+                except ValueError:
+                    continue
+                # Layout: time, value, unit, event[, ...]
+                value_raw = parts[1]
+                event = parts[3]
+                try:
+                    value = float(value_raw.replace("<not counted>", "0"))
+                except ValueError:
+                    value = 0.0
+                bucketed.setdefault(t_sec, {})[event] = value
+        return bucketed
+
+    @staticmethod
     def process_client_intervals(metrics, client_intervals):
         """Surface mean/peak latency over the test phase into the metrics dict."""
         n = len(client_intervals)
