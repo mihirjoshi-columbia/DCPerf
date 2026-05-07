@@ -88,13 +88,22 @@ class TaoBenchParser:
     # result qps calculation
     MIN_HIT_RATE = 0.88
 
-    def __init__(self, server_csv_name="server.csv", window_sec=None):
+    def __init__(
+        self,
+        server_csv_name="server.csv",
+        window_sec=None,
+        client_csv_name=None,
+    ):
         self.server_csv_name = server_csv_name
         # When None we fall back to the historical 5s cadence; callers that
         # know --window can pass it explicitly so t_sec reflects real time.
         self.window_sec = (
             window_sec if window_sec and window_sec > 0 else self.DEFAULT_WINDOW_SEC
         )
+        # Optional per-client time-series CSV; when None we skip emission.
+        self.client_csv_name = client_csv_name
+        # Populated by parse() so autoscale can re-aggregate without re-parsing.
+        self.client_intervals = []
 
     def parse(self, stdout, stderr, returncode):
         """Extracts TAO bench results from stdout."""
@@ -134,7 +143,21 @@ class TaoBenchParser:
             self.generate_server_csv(server_snapshots)
         # Stash for downstream callers (CSV writers, autoscale aggregator).
         self.client_intervals = client_intervals
+        if client_intervals and self.client_csv_name:
+            self.generate_client_csv(client_intervals)
         return metrics
+
+    def generate_client_csv(self, client_intervals):
+        """Write the parsed INTERVAL lines to a time-series CSV for plotting."""
+        lines = ["t_sec,set_qps,get_qps,hit_rate,avg_us,p50_us,p99_us,p999_us,max_us\n"]
+        for snap in client_intervals:
+            lines.append(
+                f"{snap.get('t')},{snap.get('set_qps')},{snap.get('get_qps')},"
+                + f"{snap.get('hit_rate')},{snap.get('avg_us')},{snap.get('p50_us')},"
+                + f"{snap.get('p99_us')},{snap.get('p999_us')},{snap.get('max_us')}\n"
+            )
+        with open(f"benchmarks/tao_bench/{self.client_csv_name}", "w") as table:
+            table.writelines(lines)
 
     # Default cadence (seconds per row) when --window is not specified;
     # matches the historical default of --stats-interval=5000ms.
