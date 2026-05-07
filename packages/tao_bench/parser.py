@@ -78,6 +78,19 @@ class TaoBenchParser:
             self.generate_server_csv(server_snapshots)
         return metrics
 
+    @staticmethod
+    def format_server_row(seq, snapshot):
+        fast_qps = snapshot.get("fast_qps")
+        slow_qps = snapshot.get("slow_qps")
+        is_oom = 1 if snapshot.is_oom else 0
+        total_qps = fast_qps + slow_qps
+        nanosleeps_per_sec = snapshot.get("nanosleeps_per_sec")
+        return (
+            f"{seq},{total_qps},{fast_qps},"
+            + f"{snapshot.get('hit_rate')},{slow_qps},{is_oom},"
+            + f"{snapshot.get('slow_qps_oom')},{nanosleeps_per_sec}\n"
+        )
+
     def generate_server_csv(self, server_snapshots):
         lines = []
         lines.append(
@@ -86,16 +99,7 @@ class TaoBenchParser:
 
         seq = 0
         for snapshot in server_snapshots:
-            fast_qps = snapshot.get("fast_qps")
-            slow_qps = snapshot.get("slow_qps")
-            is_oom = 1 if snapshot.is_oom else 0
-            total_qps = fast_qps + slow_qps
-            nanosleeps_per_sec = snapshot.get("nanosleeps_per_sec")
-            lines.append(
-                f"{seq},{total_qps},{fast_qps},"
-                + f"{snapshot.get('hit_rate')},{slow_qps},{is_oom},"
-                + f"{snapshot.get('slow_qps_oom')},{nanosleeps_per_sec}\n"
-            )
+            lines.append(self.format_server_row(seq, snapshot))
             seq += 1
 
         with open(f"benchmarks/tao_bench/{self.server_csv_name}", "w") as table:
