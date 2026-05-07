@@ -300,9 +300,11 @@
   args:
     - '-p {port}'
     - '-o {output}'
+    - '-W {window}'
   vars:
     - 'port=11222'
     - 'output=feedsim_results.txt'
+    - 'window=0'
   hooks:
     - hook: cpu-mpstat
       options:
@@ -326,9 +328,11 @@
     instance (rounded up).
   args:
     - '-n {num_instances}'
+    - '-W {window}'
     - '{extra_args}'
   vars:
     - 'num_instances=-1'
+    - 'window=0'
     - 'extra_args='
   hooks:
     - hook: cpu-mpstat
@@ -356,10 +360,12 @@
   args:
     - '-n {num_instances}'
     - '-i {icache_iterations}'
+    - '-W {window}'
     - '{extra_args}'
   vars:
     - 'num_instances=-1'
     - 'icache_iterations=400000'
+    - 'window=0'
     - 'extra_args='
   hooks:
     - hook: cpu-mpstat
