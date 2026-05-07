@@ -93,6 +93,8 @@ class TaoBenchParser:
         server_csv_name="server.csv",
         window_sec=None,
         client_csv_name=None,
+        interval_csv_name=None,
+        perf_csv_path=None,
     ):
         self.server_csv_name = server_csv_name
         # When None we fall back to the historical 5s cadence; callers that
@@ -102,8 +104,14 @@ class TaoBenchParser:
         )
         # Optional per-client time-series CSV; when None we skip emission.
         self.client_csv_name = client_csv_name
+        # Optional unified interval CSV joining server+client+perf on t_sec.
+        self.interval_csv_name = interval_csv_name
+        # Optional path to the perf-stat sidecar's CSV (perf_<port>.csv).
+        self.perf_csv_path = perf_csv_path
         # Populated by parse() so autoscale can re-aggregate without re-parsing.
         self.client_intervals = []
+        self.server_snapshots = []
+        self.perf_rows = {}
 
     def parse(self, stdout, stderr, returncode):
         """Extracts TAO bench results from stdout."""
@@ -143,11 +151,59 @@ class TaoBenchParser:
             self.generate_server_csv(server_snapshots)
         # Stash for downstream callers (CSV writers, autoscale aggregator).
         self.client_intervals = client_intervals
+        self.server_snapshots = server_snapshots
+        if self.perf_csv_path:
+            self.perf_rows = self.parse_perf_csv(self.perf_csv_path)
         if client_intervals and self.client_csv_name:
             self.generate_client_csv(client_intervals)
         if client_intervals:
             self.process_client_intervals(metrics, client_intervals)
+        if self.interval_csv_name:
+            self.generate_interval_metrics_csv()
         return metrics
+
+    def generate_interval_metrics_csv(self):
+        """Write a single CSV joining server, client, and perf rows on t_sec.
+
+        Server rows are produced at fixed cadence (window_sec) starting at 0.
+        Client INTERVAL rows carry their own t_sec. perf-stat rows are bucketed
+        by their first column (also seconds since perf start). We line up on
+        the rounded t_sec for the join; missing fields are written as empty
+        cells so plotting tools can still consume the file.
+        """
+        client_by_t = {round(s.get("t")): s for s in self.client_intervals}
+        perf_by_t = {round(t): row for t, row in self.perf_rows.items()}
+
+        events = sorted({k for row in perf_by_t.values() for k in row.keys()})
+        header = (
+            ["t_sec", "fast_qps", "slow_qps", "hit_rate"]
+            + ["set_qps", "get_qps", "avg_us", "p50_us", "p99_us", "p999_us", "max_us"]
+            + events
+        )
+        lines = [",".join(header) + "\n"]
+
+        n_rows = max(
+            len(self.server_snapshots),
+            len(self.client_intervals),
+            len(perf_by_t),
+        )
+        for seq in range(n_rows):
+            t_sec = seq * self.window_sec
+            srv = self.server_snapshots[seq] if seq < len(self.server_snapshots) else None
+            cli = client_by_t.get(t_sec)
+            perf = perf_by_t.get(t_sec, {})
+            row = [str(t_sec)]
+            row.append(str(srv.get("fast_qps")) if srv else "")
+            row.append(str(srv.get("slow_qps")) if srv else "")
+            row.append(str(srv.get("hit_rate")) if srv else "")
+            for k in ("set_qps", "get_qps", "avg_us", "p50_us", "p99_us", "p999_us", "max_us"):
+                row.append(str(cli.get(k)) if cli else "")
+            for ev in events:
+                row.append(str(perf.get(ev, "")))
+            lines.append(",".join(row) + "\n")
+
+        with open(f"benchmarks/tao_bench/{self.interval_csv_name}", "w") as f:
+            f.writelines(lines)
 
     @staticmethod
     def parse_perf_csv(path):
