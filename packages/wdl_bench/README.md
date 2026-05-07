@@ -132,3 +132,37 @@ numbers (typically throughput (iterations per second)).
 
 In future, we plan to add reference performance numbers of each benchmark as baseline, and DCPerf
 can automatically compare the performance of your run against the default reference run.
+
+## Per-kernel interval reporting (`--window`)
+
+When `--window=<sec>` is set (default `0`, off), `run.sh` records a
+START/END timestamp pair around every kernel invocation in
+`interval_log.txt` and runs a Linux `perf stat -I window*1000 -x ,`
+sidecar in the background, writing `perf_wdl.csv`.
+
+Note that folly Benchmark kernels are too tight (typically a few hundred
+microseconds per iteration) to instrument in-loop without an invasive
+folly patch. So unlike `tao_bench`, `video_transcode_bench`, or
+`feedsim`, the **interval unit is per-kernel rather than per-second**.
+The output shape (interval CSV + perf-stat sidecar) is otherwise the
+same.
+
+After all kernels finish, `parser.py` writes `interval_metrics.csv`
+with one row per kernel:
+
+| col | meaning |
+|---|---|
+| `kernel` | the kernel name (e.g. `hash_benchmark`) |
+| `start_t_sec` | suite-relative start time |
+| `end_t_sec` | suite-relative end time |
+| `duration_s` | end − start |
+| `cycles`, `instructions`, … | average value of each perf event over the kernel's wall-clock window |
+
+The final results file gains `total_kernels`, `mean_ipc`,
+`mean_llc_miss_rate`. Default behavior is unchanged when `window=0`.
+
+Example:
+
+```
+benchpress run folly_single_core -i window=1
+```

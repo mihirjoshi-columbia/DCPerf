@@ -153,3 +153,30 @@ Usage: ./run.sh [-h] [--encoder svt|aom|x264] [--levels low:high] [--runtime sho
     --encoder encoder name. Default: svt
     -output Result output file name. Default: "video_transcode_bench_results.txt"
 ```
+
+## Per-window interval reporting (`--window`)
+
+When `--window=<sec>` is set (default `0`, off), `run.sh` turns
+`video_transcode_bench` into a streaming benchmark:
+
+- **Encoder throughput / latency**: every `ffmpeg` invocation is launched
+  with `-progress file:progress_<i>.log`, which prints a `key=value` block
+  every ~500ms with `frame`, `fps`, `bitrate`, `out_time_us`, `speed`. The
+  parser buckets these blocks into window-aligned t_sec keys.
+- **Linux perf counters**: a `perf stat -I window*1000 -x ,` sidecar
+  (`packages/common/perf_sampler.py`) runs alongside the encoder pool and
+  writes `perf_<encoder>.csv`. Default events: `task-clock, cycles,
+  instructions, cache-references, cache-misses, LLC-load-misses,
+  branch-misses`. Override via `DCPERF_PERF_EVENTS`.
+- **Unified CSV**: progress blocks + perf rows are joined per window into
+  `interval_metrics.csv`.
+- **Final-results JSON**: gains `mean_fps`, `mean_bitrate_kbps`, `ipc`,
+  `llc_miss_rate`, `perf_event_means`.
+
+Example (job-config style):
+
+```
+benchpress run video_transcode_bench_x264 -i window=10
+```
+
+Default behavior is unchanged when `window=0`.

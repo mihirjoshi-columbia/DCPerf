@@ -289,3 +289,39 @@ Usage: run.sh [OPTION]...
     -p Port to use by the LeafNodeRank server and the load drivers. Default: 11222
     -o Result output file name. Default: "feedsim_results.txt"
 ```
+
+## Per-window interval reporting (`-W`)
+
+When `-W <sec>` is set (default `0`, off), `run.sh` and `DriverNodeRank`
+turn feedsim into a streaming benchmark:
+
+- **Server-side throughput**: not instrumented (LeafNodeRank emits per-run
+  totals only), but the driver-side QPS already reflects end-to-end
+  throughput per window.
+- **Client latency**: `DriverNodeRank` (a custom oldisim driver) installs
+  a libevent timer on thread 0 when `--window > 0`. Each fire aggregates
+  `ChildConnectionStats` from every thread, builds a delta histogram vs
+  the previous snapshot, and emits one line per window:
+  ```
+  INTERVAL t=<sec> qps=<...> avg_us=<...> p50_us=<...> p95_us=<...> p99_us=<...>
+  ```
+  These lines are preserved across `search_qps.sh`'s probe iterations via
+  the `FEEDSIM_DRIVER_LOG` env var that `run.sh` exports.
+- **Linux perf counters**: a `perf stat -I window*1000 -x ,` sidecar
+  (`packages/common/perf_sampler.py`) runs alongside the load test and
+  writes `perf_<port>.csv`. Override events via `DCPERF_PERF_EVENTS`.
+- **Unified CSV**: client INTERVAL snapshots + perf rows are joined per
+  window into `interval_metrics_<port>.csv`. For multi-instance runs
+  (`run-feedsim-multi.sh`), `aggregate_intervals.py` folds every
+  per-instance CSV into `interval_metrics_overall.csv` (qps summed,
+  latencies qps-weighted, perf counters averaged).
+- **Final-results JSON**: gains `mean_qps`, `mean_p99_us`, `ipc`,
+  `llc_miss_rate`, `perf_event_means`.
+
+Example:
+
+```
+benchpress run feedsim_default -i window=10
+```
+
+Default behavior is unchanged when `window=0`.
