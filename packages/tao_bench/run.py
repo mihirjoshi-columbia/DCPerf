@@ -10,12 +10,21 @@ import pathlib
 import re
 import shlex
 import subprocess
+import sys
 import threading
 import time
 from typing import List
 
 import args_utils
-from perf_sampler import PerfSampler, perf_csv_path_for_instance
+
+# Pull perf_sampler from packages/common where it now lives shared across
+# tao_bench, video_transcode_bench, wdl_bench, and feedsim.
+_COMMON_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "common"
+)
+if _COMMON_DIR not in sys.path:
+    sys.path.insert(0, _COMMON_DIR)
+from perf_sampler import PerfSampler, perf_csv_path_for_instance  # noqa: E402
 
 
 BENCHPRESS_ROOT = pathlib.Path(os.path.abspath(__file__)).parents[2]
