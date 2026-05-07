@@ -270,6 +270,25 @@ signal.pause()
 
     echo "results in each individual json file." | tee -a "${result_filename}"
 
+    # When --window > 0, fold per-kernel intervals + perf rows into
+    # interval_metrics.csv and append summary keys to the results file.
+    if [ "${window}" -gt 0 ]; then
+        python3 -c "
+import json, os, sys
+sys.path.insert(0, '${WDL_ROOT}')
+from parser import WdlBenchParser
+p = WdlBenchParser(
+    interval_log='${WDL_ROOT}/interval_log.txt',
+    perf_csv='${WDL_ROOT}/perf_wdl.csv',
+    output_csv='${WDL_ROOT}/interval_metrics.csv',
+)
+summary = p.write_interval_metrics_csv()
+with open('${WDL_ROOT}/${result_filename}', 'a') as f:
+    for k, v in summary.items():
+        f.write(f'{k}: {v}\n')
+print('interval_metrics.csv summary:', json.dumps(summary))
+"
+    fi
 
     popd
 
