@@ -501,6 +501,7 @@
         - '--timeout-buffer={timeout_buffer}'
         - '--disable-tls={disable_tls}'
         - '--smart-nanosleep={smart_nanosleep}'
+        - '--window={window}'
         - '--real'
       vars:
         - 'interface_name=eth0'
@@ -512,6 +513,7 @@
         - 'timeout_buffer=120'
         - 'disable_tls=0'
         - 'smart_nanosleep=0'
+        - 'window=0'
     client:
       args:
         - 'client'
@@ -528,6 +530,7 @@
         - '--sanity={sanity}'
         - '--wait-after-warmup={wait_after_warmup}'
         - '--disable-tls={disable_tls}'
+        - '--window={window}'
         - '--real'
       vars:
         - 'server_hostname'
@@ -541,6 +544,7 @@
         - 'wait_after_warmup=5'
         - 'sanity=0'
         - 'disable_tls=0'
+        - 'window=0'
   hooks:
     - hook: copymove
       options:
