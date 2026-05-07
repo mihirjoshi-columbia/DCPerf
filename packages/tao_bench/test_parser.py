@@ -18,8 +18,10 @@ Run from this directory with::
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 from parser import TaoBenchClientIntervalSnapshot, TaoBenchParser
+from perf_sampler import DEFAULT_EVENTS, PerfSampler, resolve_events
 
 
 class TestClientIntervalSnapshot(unittest.TestCase):
@@ -108,6 +110,54 @@ class TestProcessClientIntervals(unittest.TestCase):
         self.assertEqual(metrics["client_avg_us"], 15.0)
         self.assertEqual(metrics["client_max_us"], 400.0)
         self.assertEqual(metrics["client_p50_us_avg"], 10.0)
+
+
+class TestPerfSampler(unittest.TestCase):
+    def test_resolve_events_default(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("DCPERF_PERF_EVENTS", None)
+            self.assertEqual(resolve_events(None), DEFAULT_EVENTS)
+
+    def test_resolve_events_env_override(self):
+        with mock.patch.dict(
+            os.environ, {"DCPERF_PERF_EVENTS": "cycles,instructions"}
+        ):
+            self.assertEqual(resolve_events(None), ["cycles", "instructions"])
+
+    def test_build_cmd_includes_window_and_events(self):
+        s = PerfSampler(
+            output_csv="/tmp/perf.csv",
+            window_sec=2,
+            duration_sec=30,
+            events=["cycles", "instructions"],
+        )
+        cmd = s.build_cmd()
+        self.assertEqual(cmd[0:1], ["perf"])
+        self.assertIn("stat", cmd)
+        self.assertIn("-I", cmd)
+        self.assertIn("2000", cmd)
+        self.assertIn("-e", cmd)
+        ev_idx = cmd.index("-e")
+        self.assertEqual(cmd[ev_idx + 1], "cycles,instructions")
+        self.assertEqual(cmd[-3:], ["--", "sleep", "30"])
+
+    def test_invalid_window_raises(self):
+        with self.assertRaises(ValueError):
+            PerfSampler(output_csv="x", window_sec=0, duration_sec=1)
+
+    def test_start_writes_stub_when_perf_missing(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "perf.csv")
+            s = PerfSampler(
+                output_csv=out, window_sec=1, duration_sec=1, perf_binary="perf-not-here"
+            )
+            with mock.patch(
+                "perf_sampler.subprocess.Popen", side_effect=FileNotFoundError()
+            ):
+                s.start()
+            self.assertTrue(os.path.exists(out))
+            with open(out) as f:
+                self.assertIn("perf binary not found", f.read())
 
 
 if __name__ == "__main__":
