@@ -302,6 +302,31 @@ signal.pause()
         fi
     done
 
+    # When interval reporting was enabled, fold per-job ffmpeg progress logs
+    # and the perf-stat sidecar CSV into a single interval_metrics.csv plus
+    # update the final results file with summary fields (mean_fps, ipc, ...).
+    if [ "${window}" -gt 0 ]; then
+        PYTHONPATH="${FFMPEG_ROOT}/../../packages/common" python3 -c "
+import json, os, sys
+sys.path.insert(0, os.path.join('${FFMPEG_ROOT}', '..', '..', 'packages', 'video_transcode_bench'))
+from parser import VideoTranscodeParser
+p = VideoTranscodeParser(
+    progress_glob=os.path.join('${FFMPEG_ROOT}', 'progress_*.log'),
+    window_sec=${window},
+    perf_csv_path=os.path.join('${FFMPEG_ROOT}', 'perf_${encoder}.csv'),
+)
+summary = p.write_interval_metrics_csv(os.path.join('${FFMPEG_ROOT}', 'interval_metrics.csv'))
+with open(os.path.join('${FFMPEG_ROOT}', '${result_filename}'), 'a') as f:
+    for k, v in summary.items():
+        if k == 'perf_event_means':
+            continue
+        f.write(f'{k}: {v}\n')
+print('interval_metrics.csv summary:', json.dumps(
+    {k: v for k, v in summary.items() if k != 'perf_event_means'}
+))
+"
+    fi
+
     sed -i "/^ENC/d" ./generate_commands_all.py
     delete_replicas
 

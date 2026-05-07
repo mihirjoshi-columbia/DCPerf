@@ -139,6 +139,92 @@ class VideoTranscodeParser:
         self.window_sec = window_sec
         self.perf_csv_path = perf_csv_path
 
+    def parse_perf_csv(self) -> Dict[int, Dict[str, float]]:
+        """Bucket the perf-stat CSV (perf stat -I window*1000 -x ,) on
+        window-aligned t_sec keys, mirroring tao_bench's parser approach."""
+        rows: Dict[int, Dict[str, float]] = {}
+        if not self.perf_csv_path:
+            return rows
+        try:
+            f = open(self.perf_csv_path)
+        except OSError:
+            return rows
+        with f:
+            for line in f:
+                if not line or line.startswith("#"):
+                    continue
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) < 4:
+                    continue
+                try:
+                    t = float(parts[0])
+                except ValueError:
+                    continue
+                bucket = int(t // self.window_sec) * self.window_sec
+                event = parts[3]
+                try:
+                    val = float(parts[1].replace("<not counted>", "0"))
+                except ValueError:
+                    val = 0.0
+                rows.setdefault(bucket, {})[event] = val
+        return rows
+
+    def write_interval_metrics_csv(self, output_path: str) -> Dict[str, float]:
+        """Join progress + perf rows on t_sec bucket and write the unified CSV.
+
+        Returns a dict of summary metrics suitable for the final-results JSON.
+        """
+        progress = self.collect_progress()
+        perf = self.parse_perf_csv()
+
+        events = sorted({k for row in perf.values() for k in row.keys()})
+        header = (
+            ["t_sec", "frames", "fps", "bitrate_kbps", "speed"] + events
+        )
+        lines = [",".join(header) + "\n"]
+        all_t = sorted(set(progress.keys()) | set(perf.keys()))
+        for t in all_t:
+            blk = progress.get(t)
+            row = [str(t)]
+            row.append(str(blk.get_frame()) if blk else "")
+            row.append(str(blk.get_fps()) if blk else "")
+            row.append(str(blk.get_bitrate_kbps()) if blk else "")
+            row.append(str(blk.get_speed()) if blk else "")
+            perf_row = perf.get(t, {})
+            for ev in events:
+                row.append(str(perf_row.get(ev, "")))
+            lines.append(",".join(row) + "\n")
+
+        with open(output_path, "w") as f:
+            f.writelines(lines)
+
+        # Summary metrics
+        summary: Dict[str, float] = {}
+        if progress:
+            blocks = list(progress.values())
+            fps_vals = [b.get_fps() for b in blocks if b.get_fps() > 0]
+            br_vals = [b.get_bitrate_kbps() for b in blocks if b.get_bitrate_kbps() > 0]
+            if fps_vals:
+                summary["mean_fps"] = sum(fps_vals) / len(fps_vals)
+            if br_vals:
+                summary["mean_bitrate_kbps"] = sum(br_vals) / len(br_vals)
+        if perf:
+            agg: Dict[str, list] = {}
+            for row in perf.values():
+                for k, v in row.items():
+                    agg.setdefault(k, []).append(v)
+            means = {k: sum(v) / len(v) for k, v in agg.items() if v}
+            cycles = means.get("cycles", 0)
+            instructions = means.get("instructions", 0)
+            cache_refs = means.get("cache-references", 0)
+            cache_misses = means.get("cache-misses", 0)
+            if cycles > 0:
+                summary["ipc"] = instructions / cycles
+            if cache_refs > 0:
+                summary["llc_miss_rate"] = cache_misses / cache_refs
+            summary["perf_event_means"] = means
+        return summary
+
     def collect_progress(self) -> Dict[int, FfmpegProgressBlock]:
         """Merge per-job progress files into a single time-bucketed dict.
         Multiple parallel ffmpeg jobs write into the same window; we sum
