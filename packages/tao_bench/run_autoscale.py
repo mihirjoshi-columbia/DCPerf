@@ -454,6 +454,31 @@ def run_server(args):
             overall["hit_ratio"] * overall["successful_instances"] + res["hit_ratio"]
         ) / (overall["successful_instances"] + 1)
         overall["successful_instances"] += 1
+
+    # Roll up the new interval-reporting metrics into the overall JSON so that
+    # users get latency and perf counter visibility straight from `benchpress
+    # run`'s output without having to grep CSVs.
+    interval_keys = (
+        "client_avg_us",
+        "client_p50_us_avg",
+        "client_p99_us_avg",
+        "client_p999_us_avg",
+        "client_max_us",
+        "client_intervals",
+        "ipc",
+        "llc_miss_rate",
+    )
+    for k in interval_keys:
+        vals = [r[k] for r in results if k in r]
+        if not vals:
+            continue
+        if k == "client_max_us":
+            overall[k] = max(vals)
+        elif k == "client_intervals":
+            overall[k] = sum(vals)
+        else:
+            overall[k] = sum(vals) / len(vals)
+
     print(json.dumps(overall, indent=4))
 
 
