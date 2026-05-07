@@ -309,6 +309,32 @@ signal.pause()
         wait "${PERF_SAMPLER_PID}" 2>/dev/null || true
     fi
 
+    # Fold the driver INTERVAL log + perf-stat sidecar CSV into
+    # interval_metrics.csv and client.csv. Only runs when --window>0.
+    if [ "${window}" -gt 0 ]; then
+        python3 -c "
+import json, os, sys
+sys.path.insert(0, '${FEEDSIM_ROOT}/../../packages/feedsim')
+from parser import FeedsimParser
+p = FeedsimParser(
+    driver_log='${FEEDSIM_ROOT}/driver_intervals.log',
+    perf_csv='${FEEDSIM_ROOT}/perf_${port}.csv',
+    window_sec=${window},
+    client_csv='${FEEDSIM_ROOT}/client.csv',
+    interval_csv='${FEEDSIM_ROOT}/interval_metrics.csv',
+)
+summary = p.run()
+with open('${FEEDSIM_ROOT}/${result_filename}', 'a') as f:
+    for k, v in summary.items():
+        if k == 'perf_event_means':
+            continue
+        f.write(f'{k}: {v}\n')
+print('feedsim interval_metrics.csv summary:', json.dumps(
+    {k: v for k, v in summary.items() if k != 'perf_event_means'}
+))
+"
+    fi
+
     kill -SIGINT $LEAF_PID || true > /dev/null # SIGINT so exits cleanly
 }
 
