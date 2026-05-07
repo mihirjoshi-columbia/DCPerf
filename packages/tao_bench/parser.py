@@ -158,9 +158,35 @@ class TaoBenchParser:
             self.generate_client_csv(client_intervals)
         if client_intervals:
             self.process_client_intervals(metrics, client_intervals)
+        if self.perf_rows:
+            self.process_perf_rows(metrics, self.perf_rows)
         if self.interval_csv_name:
             self.generate_interval_metrics_csv()
         return metrics
+
+    @staticmethod
+    def process_perf_rows(metrics, perf_rows):
+        """Boil the perf-stat time series down to a few high-level metrics in
+        the final JSON. We compute IPC and LLC-miss-rate from the standard
+        events; other events are summed/averaged so they are still present."""
+        if not perf_rows:
+            return
+        agg = {}
+        for row in perf_rows.values():
+            for k, v in row.items():
+                agg.setdefault(k, []).append(v)
+        means = {k: (sum(v) / len(v)) for k, v in agg.items() if v}
+        cycles = means.get("cycles") or 0
+        instructions = means.get("instructions") or 0
+        cache_refs = means.get("cache-references") or 0
+        cache_misses = means.get("cache-misses") or 0
+        if cycles > 0:
+            metrics["ipc"] = instructions / cycles
+        if cache_refs > 0:
+            metrics["llc_miss_rate"] = cache_misses / cache_refs
+        # Pass through the raw means under a namespaced key so downstream
+        # tooling can still pick up arbitrary events without code changes.
+        metrics["perf_event_means"] = means
 
     def generate_interval_metrics_csv(self):
         """Write a single CSV joining server, client, and perf rows on t_sec.
