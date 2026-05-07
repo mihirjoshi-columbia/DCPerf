@@ -251,7 +251,32 @@ main() {
     if [ "${DCPERF_PERF_RECORD}" = 1 ] && ! [ -f "perf.data" ]; then
         collect_perf_record &
     fi
+    PERF_SAMPLER_PID=""
+    if [ "${window}" -gt 0 ]; then
+        # Spawn the shared perf-stat sidecar (packages/common/perf_sampler.py).
+        # We cap the duration at a generous 6h; the sidecar is torn down
+        # immediately after the encoder pool finishes, so the actual runtime
+        # tracks the ffmpeg pool exactly.
+        PYTHONPATH="${FFMPEG_ROOT}/../../packages/common" python3 -c "
+import os, signal, sys
+sys.path.insert(0, os.environ['PYTHONPATH'])
+from perf_sampler import PerfSampler
+s = PerfSampler(
+    output_csv='${FFMPEG_ROOT}/perf_${encoder}.csv',
+    window_sec=${window},
+    duration_sec=6 * 3600,
+)
+s.start()
+signal.pause()
+" &
+        PERF_SAMPLER_PID=$!
+        echo "Started perf sampler pid=${PERF_SAMPLER_PID}"
+    fi
     ./"${run_sh}"
+    if [ -n "${PERF_SAMPLER_PID}" ]; then
+        kill -TERM "${PERF_SAMPLER_PID}" 2>/dev/null || true
+        wait "${PERF_SAMPLER_PID}" 2>/dev/null || true
+    fi
     benchreps_tell_state "done"
     #generate output
     if [ -f "${result_filename}" ]; then
