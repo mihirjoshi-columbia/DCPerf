@@ -57,6 +57,7 @@ def run_cmd(
     cmd: List[str],
     timeout=None,
     for_real=True,
+    on_exit=None,
 ) -> str:
     print(" ".join(cmd))
     if for_real:
@@ -69,6 +70,14 @@ def run_cmd(
         except subprocess.TimeoutExpired:
             proc.terminate()
             proc.wait()
+        finally:
+            # Always run cleanup callbacks (e.g. stopping the perf sampler)
+            # even when the underlying server hits the timeout fence.
+            if on_exit is not None:
+                try:
+                    on_exit()
+                except Exception as e:
+                    print(f"on_exit callback failed: {e}")
 
 
 def profile_server():
@@ -216,13 +225,15 @@ def run_server(args):
         os.environ["LD_LIBRARY_PATH"] = os.path.join(TAO_BENCH_DIR, "build-deps/lib")
 
     timeout = args.warmup_time + args.test_time + args.timeout_buffer
-    run_cmd(server_cmd, timeout, args.real)
+
+    def _cleanup_perf_sampler():
+        if perf_sampler is not None:
+            perf_sampler.stop()
+
+    run_cmd(server_cmd, timeout, args.real, on_exit=_cleanup_perf_sampler)
 
     if "DCPERF_PERF_RECORD" in os.environ and os.environ["DCPERF_PERF_RECORD"] == "1":
         t_prof.cancel()
-
-    if perf_sampler is not None:
-        perf_sampler.stop()
 
 
 def get_client_cmd(args, n_seconds, is_warmup=False):
