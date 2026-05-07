@@ -5,6 +5,49 @@
 # LICENSE file in the root directory of this source tree.
 
 
+class TaoBenchClientIntervalSnapshot:
+    """Parses a single ``INTERVAL t=... ...`` line emitted by tao_bench_client
+    when it's run with ``--window=<sec>``.
+
+    The line is space-delimited ``key=value`` pairs after the ``INTERVAL``
+    leader, so any reordering by the C++ side is tolerated.
+    """
+
+    KEYS = (
+        "t",
+        "set_qps",
+        "get_qps",
+        "hit_rate",
+        "avg_us",
+        "p50_us",
+        "p99_us",
+        "p999_us",
+        "max_us",
+    )
+
+    def __init__(self, line):
+        self.valid = False
+        line = line.strip()
+        if not line.startswith("INTERVAL"):
+            return
+        for token in line.split()[1:]:
+            if "=" not in token:
+                continue
+            key, _, value = token.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if key not in self.KEYS:
+                continue
+            try:
+                setattr(self, key, float(value))
+            except ValueError:
+                continue
+        self.valid = all(hasattr(self, k) for k in self.KEYS)
+
+    def get(self, key, default=0.0):
+        return getattr(self, key, default)
+
+
 class TaoBenchServerSnapshot:
     KEYS = ["fast_qps", "hit_rate", "slow_qps", "slow_qps_oom", "nanosleeps_per_sec"]
 
