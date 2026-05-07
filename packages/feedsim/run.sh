@@ -64,6 +64,10 @@ Usage: ${0##*/} [OPTION]...
     -d Duration of each load testing experiment, in seconds. Default: 300
     -p Port to use by the LeafNodeRank server and the load drivers. Default: 11222
     -o Result output file name. Default: "feedsim_results.txt"
+    -W Per-window interval reporting in seconds. Default: 0 (off). When > 0,
+       DriverNodeRank prints "INTERVAL t=<sec> qps=<...> avg_us=<...>
+       p50_us=<...> p95_us=<...> p99_us=<...>" lines every window seconds AND
+       a packages/common/perf_sampler.py sidecar is launched alongside.
 EOF
 }
 
@@ -118,6 +122,9 @@ main() {
     local icache_iterations
     icache_iterations="1600000"
 
+    local window
+    window="0"
+
     if [ -z "$IS_AUTOSCALE_RUN" ]; then
        echo > $BREPS_LFILE
     fi
@@ -155,6 +162,9 @@ main() {
             -i)
                 icache_iterations="$2"
                 ;;
+            -W)
+                window="$2"
+                ;;
             -h|--help)
                 show_help >&2
                 exit 1
@@ -165,7 +175,7 @@ main() {
         esac
 
         case $1 in
-            -t|-c|-s|-d|-p|-q|-o|-w|-i)
+            -t|-c|-s|-d|-p|-q|-o|-w|-i|-W)
                 if [ -z "$2" ]; then
                     echo "Invalid option: '$1' requires an argument" 1>&2
                     exit 1
@@ -209,6 +219,27 @@ main() {
     # Remove sleep, expose an endpoint or print a message to notify service is ready
     sleep 90
 
+    # When --window > 0, build a perf_sampler sidecar around the load test;
+    # written into perf_<port>.csv next to the result file. Same module is
+    # used by tao_bench, video_transcode_bench, and wdl_bench.
+    PERF_SAMPLER_PID=""
+    if [ "${window}" -gt 0 ]; then
+        PYTHONPATH="${FEEDSIM_ROOT}/../../packages/common" python3 -c "
+import os, signal, sys
+sys.path.insert(0, os.environ['PYTHONPATH'])
+from perf_sampler import PerfSampler
+s = PerfSampler(
+    output_csv='${FEEDSIM_ROOT}/perf_${port}.csv',
+    window_sec=${window},
+    duration_sec=6 * 3600,
+)
+s.start()
+signal.pause()
+" &
+        PERF_SAMPLER_PID=$!
+        echo "Started perf sampler pid=${PERF_SAMPLER_PID}"
+    fi
+
     # FIXME(cltorres)
     # Skip ParentNode for now, and talk directly to LeafNode
     # ParentNode acts as a simple proxy, and does not influence
@@ -217,6 +248,15 @@ main() {
     # when trying to create sockets for listening.
 
     # Start DriverNode
+    # When --window > 0 we ask scripts/search_qps.sh to preserve the driver's
+    # raw stdout (which now contains INTERVAL lines emitted by DriverNodeRank)
+    # via FEEDSIM_DRIVER_LOG, and we forward --window=N to the driver itself.
+    DRIVER_WINDOW_ARG=()
+    if [ "${window}" -gt 0 ]; then
+        export FEEDSIM_DRIVER_LOG="${FEEDSIM_ROOT}/driver_intervals.log"
+        : > "${FEEDSIM_DRIVER_LOG}"
+        DRIVER_WINDOW_ARG=(--window="${window}")
+    fi
     client_monitor_port="$((monitor_port-1000))"
     if [ -z "$fixed_qps" ] && [ "$auto_driver_threads" != "1" ]; then
         benchreps_tell_state "before search_qps"
@@ -225,14 +265,16 @@ main() {
                 --server "0.0.0.0:$port" \
                 --monitor_port "$client_monitor_port" \
                 --threads="${DRIVER_THREADS}" \
-                --connections=4
+                --connections=4 \
+                "${DRIVER_WINDOW_ARG[@]}"
         benchreps_tell_state "after search_qps"
     elif [ -z "$fixed_qps" ] && [ "$auto_driver_threads" = "1" ]; then
         benchreps_tell_state "before search_qps"
         scripts/search_qps.sh -a -w 15 -f 300 -s 95p:500 -o "${FEEDSIM_ROOT}/${result_filename}" -- \
             build/workloads/ranking/DriverNodeRank \
                 --monitor_port "$client_monitor_port" \
-                --server "0.0.0.0:$port"
+                --server "0.0.0.0:$port" \
+                "${DRIVER_WINDOW_ARG[@]}"
         benchreps_tell_state "after search_qps"
     else
         # Adjust the number of workers according to QPS
@@ -254,11 +296,19 @@ main() {
                 --server "0.0.0.0:$port" \
                 --monitor_port "$client_monitor_port" \
                 --threads="${num_workers}" \
-                --connections="${num_connections}"
+                --connections="${num_connections}" \
+                "${DRIVER_WINDOW_ARG[@]}"
         benchreps_tell_state "after fixed_qps_exp"
     fi
 
     sleep 5 # wait for queue to drain
+
+    # Tear down the perf-stat sidecar before final cleanup (if started).
+    if [ -n "${PERF_SAMPLER_PID:-}" ]; then
+        kill -TERM "${PERF_SAMPLER_PID}" 2>/dev/null || true
+        wait "${PERF_SAMPLER_PID}" 2>/dev/null || true
+    fi
+
     kill -SIGINT $LEAF_PID || true > /dev/null # SIGINT so exits cleanly
 }
 

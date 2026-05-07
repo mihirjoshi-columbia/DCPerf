@@ -136,6 +136,13 @@ run_loadtest() {
   # wait for results to show up and queries to drain
   sleep $wait_time
 
+  # When INTERVAL reporting is on (--window>0 in run.sh), preserve the
+  # driver's raw stdout across iterations so the parser can later read
+  # the INTERVAL lines into interval_metrics.csv.
+  if [ -n "${FEEDSIM_DRIVER_LOG:-}" ]; then
+    cat "$tmp_file" >> "${FEEDSIM_DRIVER_LOG}"
+  fi
+
   # check file for QPS
   if grep -q "#: [0-9]\+.\([0-9]\+\)\? QPS" $tmp_file; then
     local qps=$(cat $tmp_file | grep QPS | awk '{print $2}')
