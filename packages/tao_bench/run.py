@@ -117,6 +117,11 @@ def affinitize_nic(args):
 def run_server(args):
     n_cores = len(os.sched_getaffinity(0))
     n_channels = int(n_cores * args.nic_channel_ratio)
+    # When --window is enabled, override --stats-interval so the server
+    # emits its `fast_qps = ...` line on the same cadence as the rest of
+    # the interval-reporting machinery (client INTERVAL lines, perf sampler).
+    if getattr(args, "window", 0) and args.window > 0:
+        args.stats_interval = args.window * 1000
     if args.interface_name != "lo":
         affinitize_nic(args)
     # number of threads for various paths
