@@ -4,6 +4,14 @@ Copyright (c) Meta Platforms, Inc. and affiliates.
 This source code is licensed under the MIT license found in the
 LICENSE file in the root directory of this source tree.
 -->
+# Unreleased
+
+## TaoBench
+
+- _(WIP)_ Per-window interval reporting (`--window`): streams server throughput,
+  client latency percentiles, and Linux `perf stat` counters during the test
+  phase. Default behavior is unchanged when `--window=0`.
+
 # v1.0
 
 We are excited to release DCPerf v1.0 which is the first stable release of DCPerf. This
