@@ -253,7 +253,8 @@ signal.pause()
     # via FEEDSIM_DRIVER_LOG, and we forward --window=N to the driver itself.
     DRIVER_WINDOW_ARG=()
     if [ "${window}" -gt 0 ]; then
-        export FEEDSIM_DRIVER_LOG="${FEEDSIM_ROOT}/driver_intervals.log"
+        # Per-port suffixes so multi-instance runs don't clobber each other.
+        export FEEDSIM_DRIVER_LOG="${FEEDSIM_ROOT}/driver_intervals_${port}.log"
         : > "${FEEDSIM_DRIVER_LOG}"
         DRIVER_WINDOW_ARG=(--window="${window}")
     fi
@@ -317,11 +318,11 @@ import json, os, sys
 sys.path.insert(0, '${FEEDSIM_ROOT}/../../packages/feedsim')
 from parser import FeedsimParser
 p = FeedsimParser(
-    driver_log='${FEEDSIM_ROOT}/driver_intervals.log',
+    driver_log='${FEEDSIM_ROOT}/driver_intervals_${port}.log',
     perf_csv='${FEEDSIM_ROOT}/perf_${port}.csv',
     window_sec=${window},
-    client_csv='${FEEDSIM_ROOT}/client.csv',
-    interval_csv='${FEEDSIM_ROOT}/interval_metrics.csv',
+    client_csv='${FEEDSIM_ROOT}/client_${port}.csv',
+    interval_csv='${FEEDSIM_ROOT}/interval_metrics_${port}.csv',
 )
 summary = p.run()
 with open('${FEEDSIM_ROOT}/${result_filename}', 'a') as f:

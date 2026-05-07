@@ -178,6 +178,13 @@ else
     is_unstable_run="$?"
 fi
 
+# When per-instance interval reporting is enabled, fold the per-port CSVs
+# into a single interval_metrics_overall.csv. The aggregator is a no-op
+# when no per-instance interval CSV files are present.
+if compgen -G "${FEEDSIM_ROOT}/interval_metrics_*.csv" > /dev/null; then
+    python3 "${FEEDSIM_ROOT}/aggregate_intervals.py" "${FEEDSIM_ROOT}" || true
+fi
+
 # rerun this program with fixed qps if detecting high variance
 if [[ "$is_unstable_run" = 1 ]] && [[ "$IS_FIXED_QPS" = 0 ]] && [[ -z "$IS_RERUN" ]]; then
     max_req_qps="$(cat /tmp/max_req_qps)"
