@@ -100,6 +100,7 @@ class TaoBenchParser:
         """Extracts TAO bench results from stdout."""
         metrics = {"role": "unknown"}
         server_snapshots = []
+        client_intervals = []
         warmup_done = False
         exec_done = False
         for line in stdout:
@@ -110,6 +111,13 @@ class TaoBenchParser:
             ):
                 metrics["role"] = "server"
                 server_snapshots.append(TaoBenchServerSnapshot(line))
+            # client per-window INTERVAL metrics (--window=N enabled)
+            if line.strip().startswith("INTERVAL"):
+                snap = TaoBenchClientIntervalSnapshot(line)
+                if snap.valid:
+                    client_intervals.append(snap)
+                    if metrics["role"] == "unknown":
+                        metrics["role"] = "client"
             # client metrics
             if line.strip().startswith("ALL STATS"):
                 exec_done = warmup_done
@@ -124,6 +132,8 @@ class TaoBenchParser:
         if metrics["role"] == "server":
             self.process_server_snapshots(metrics, server_snapshots)
             self.generate_server_csv(server_snapshots)
+        # Stash for downstream callers (CSV writers, autoscale aggregator).
+        self.client_intervals = client_intervals
         return metrics
 
     # Default cadence (seconds per row) when --window is not specified;
