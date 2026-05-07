@@ -15,6 +15,7 @@ import time
 from typing import List
 
 import args_utils
+from perf_sampler import PerfSampler, perf_csv_path_for_instance
 
 
 BENCHPRESS_ROOT = pathlib.Path(os.path.abspath(__file__)).parents[2]
@@ -192,6 +193,21 @@ def run_server(args):
         t_prof = threading.Timer(profiler_wait_time, profile_server)
         t_prof.start()
 
+    # Spawn the perf-stat sidecar when interval reporting is enabled. We
+    # only run it during the actual test phase so the warmup is excluded.
+    perf_sampler = None
+    if getattr(args, "window", 0) and args.window > 0:
+        perf_csv = perf_csv_path_for_instance(
+            TAO_BENCH_DIR, getattr(args, "port_number", 11211)
+        )
+        perf_sampler = PerfSampler(
+            output_csv=perf_csv,
+            window_sec=args.window,
+            duration_sec=args.warmup_time + args.test_time + args.timeout_buffer,
+        )
+        print(f"Starting perf sampler: {perf_sampler.cmd_string()}")
+        perf_sampler.start()
+
     # If running on Ubuntu, we should explicitly export LD_LIBRARY_PATH
     # to be benchmarks/tao_bench/build-deps/lib to workaround a bug that
     # TaoBench server will try to load the libcrypto in system even though we
@@ -204,6 +220,9 @@ def run_server(args):
 
     if "DCPERF_PERF_RECORD" in os.environ and os.environ["DCPERF_PERF_RECORD"] == "1":
         t_prof.cancel()
+
+    if perf_sampler is not None:
+        perf_sampler.stop()
 
 
 def get_client_cmd(args, n_seconds, is_warmup=False):
