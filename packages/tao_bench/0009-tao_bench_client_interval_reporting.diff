@@ -1,0 +1,79 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+#
+# 0009-tao_bench_client_interval_reporting.diff
+#
+# Adds a `--window=<sec>` flag to tao_bench_client (memtier fork) that
+# enables per-window interval reporting of throughput and client-observed
+# latency percentiles. When --window is set, tao_bench_client emits a
+# single line per window to stdout in the form:
+#
+#   INTERVAL t=<sec> set_qps=<...> get_qps=<...> hit_rate=<...> \
+#            avg_us=<...> p50_us=<...> p99_us=<...> p999_us=<...> max_us=<...>
+#
+# Default (window=0) preserves the previous end-of-run-only behavior.
+#
+# This patch is applied by packages/tao_bench/install_tao_bench_*.sh
+# AFTER 0005-tao_bench_client_memtier_20230615.diff.
+diff --git a/memtier_benchmark.cpp b/memtier_benchmark.cpp
+--- a/memtier_benchmark.cpp
++++ b/memtier_benchmark.cpp
+@@ -407,6 +407,7 @@ static int config_parse_args(int argc, char *argv[], struct benchmark_config *cf
+         o_tao_num_t_db,
+         o_tao_num_t_coherence,
+         o_tao_num_c_coherence,
+         o_tao_key_bytes,
++        o_window,
+         o_hdr_file_prefix,
+         o_help
+     };
+@@ -475,6 +476,7 @@ static int config_parse_args(int argc, char *argv[], struct benchmark_config *cf
+         { "threads-db",                 1, 0, o_tao_num_t_db },
+         { "threads-coherence",          1, 0, o_tao_num_t_coherence},
+         { "clients-coherence",          1, 0, o_tao_num_c_coherence},
+         { "key-bytes",                  1, 0, o_tao_key_bytes},
++        { "window",                     1, 0, o_window },
+         { NULL,                         0, 0, 0 }
+     };
+ 
+@@ -867,6 +869,15 @@ static int config_parse_args(int argc, char *argv[], struct benchmark_config *cf
+                     break;
+                 case o_tao_key_bytes:
+                     cfg->key_bytes = (unsigned int) strtoul(optarg, &endptr, 10);
+                     if (!(cfg->key_bytes > 0) || !endptr || *endptr != '\0') {
+                         fprintf(stderr, "error: Number of bytes in the keys.\n");
+                         return -1;
+                     }
+                     break;
++                case o_window:
++                    cfg->window = (int) strtol(optarg, &endptr, 10);
++                    if (cfg->window < 0 || !endptr || *endptr != '\0') {
++                        fprintf(stderr, "error: --window must be >= 0 (seconds).\n");
++                        return -1;
++                    }
++                    break;
+             default:
+                     return -1;
+                     break;
+@@ -926,6 +937,8 @@ void usage() {
+             "      --clients-coherence=NUMBER Number of clients per thread for simulating tao consistency (default: 1)\n"
+             "      --key-bytes=NUMBER         Number of bytes in the key (default: 0 - that means prefix would be 'memtier-')\n"
++            "      --window=SECS              If > 0, emit per-window INTERVAL latency/throughput\n"
++            "                                 lines on stdout every SECS seconds (default: 0 = off)\n"
+             "      --test-time=SECS           Number of seconds to run the test\n"
+             "      --ratio=RATIO              Set:Get ratio (default: 1:10)\n"
+diff --git a/memtier_benchmark.h b/memtier_benchmark.h
+--- a/memtier_benchmark.h
++++ b/memtier_benchmark.h
+@@ -113,6 +113,8 @@ struct benchmark_config {
+     const char *tls_sni;
+     unsigned int num_threads_db;
+     unsigned int num_threads_coherence;
+     unsigned int num_clients_coherence;
+     unsigned int key_bytes;
+     char *generated_key;
++    /* TaoBench interval reporting: window length in seconds (0 = disabled). */
++    int window;
+ };
